@@ -5,21 +5,13 @@ import StatsPage from './pages/StatsPage';
 import TicketDetailPage from './pages/TicketDetailPage';
 import TicketListPage from './pages/TicketListPage';
 
-const GITHUB_PAGES_BASE_PATH = '/support-triage-ai-dashboard';
-
-function resolveRouterBasePath(): string {
-  if (typeof window === 'undefined') {
-    return '/';
-  }
-
-  return window.location.pathname.startsWith(GITHUB_PAGES_BASE_PATH) ? GITHUB_PAGES_BASE_PATH : '/';
-}
+const routerBasePath = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL.slice(0, -1)
+  : import.meta.env.BASE_URL;
 
 function App() {
-  const basePath = resolveRouterBasePath();
-
   return (
-    <BrowserRouter basename={basePath}>
+    <BrowserRouter basename={routerBasePath}>
       <AISettingsProvider>
         <Routes>
           <Route path="/" element={<AppShell />}>
