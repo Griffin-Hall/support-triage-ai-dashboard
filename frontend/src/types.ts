@@ -6,15 +6,23 @@ export const Status = {
 export const Tag = {
   BILLING: 'BILLING',
   TECHNICAL: 'TECHNICAL',
-  ACCOUNT: 'ACCOUNT',
-  URGENT: 'URGENT',
-  GENERAL: 'GENERAL',
+  SALES: 'SALES',
+  MISC: 'MISC',
 } as const;
 
 export const Priority = {
   LOW: 'LOW',
   MEDIUM: 'MEDIUM',
   HIGH: 'HIGH',
+  URGENT: 'URGENT',
+} as const;
+
+export const Queue = {
+  URGENT: 'URGENT',
+  BILLING: 'BILLING',
+  TECHNICAL: 'TECHNICAL',
+  SALES: 'SALES',
+  MISC: 'MISC',
 } as const;
 
 export const AIProvider = {
@@ -26,6 +34,7 @@ export const AIProvider = {
 export type StatusType = typeof Status[keyof typeof Status];
 export type TagType = typeof Tag[keyof typeof Tag];
 export type PriorityType = typeof Priority[keyof typeof Priority];
+export type QueueType = typeof Queue[keyof typeof Queue];
 export type AIProviderType = typeof AIProvider[keyof typeof AIProvider];
 
 export interface Ticket {
@@ -37,6 +46,7 @@ export interface Ticket {
   status: StatusType;
   createdAt: string;
   updatedAt: string;
+  queue?: QueueType;
   aiAnalysis?: TicketAIAnalysis;
 }
 
@@ -50,6 +60,8 @@ export interface TicketAIAnalysis {
   aiModel: string | null;
   acceptedByAgent: boolean | null;
   finalReply: string | null;
+  needsReview?: boolean;
+  queue?: QueueType;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,11 +92,40 @@ export interface Stats {
     rejectedAnalyses: number;
     acceptanceRate: number;
   };
+  kpis: {
+    ticketsClosed: {
+      total: number;
+      last7Days: number;
+      last30Days: number;
+    };
+    aiDraftsCreated: {
+      total: number;
+      last7Days: number;
+      last30Days: number;
+    };
+  };
+  dailyTickets: Array<{
+    date: string;
+    label: string;
+    created: number;
+    closed: number;
+    synthetic: boolean;
+  }>;
+  dailyTicketsMeta: {
+    windowDays: number;
+    mode: 'simulated' | 'actual';
+    simulatedRange: {
+      min: number;
+      max: number;
+    } | null;
+  };
+  queues: Record<QueueType, number>;
 }
 
 export interface TicketFilters {
   page?: number;
   limit?: number;
+  queue?: QueueType;
   tag?: TagType;
   priority?: PriorityType;
   status?: StatusType;

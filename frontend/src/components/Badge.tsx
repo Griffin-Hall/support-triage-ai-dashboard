@@ -8,15 +8,15 @@ interface BadgeProps {
 const tagStyles: Record<TagType, string> = {
   [Tag.BILLING]: 'bg-amber-100 text-amber-800 border-amber-200',
   [Tag.TECHNICAL]: 'bg-sky-100 text-sky-800 border-sky-200',
-  [Tag.ACCOUNT]: 'bg-teal-100 text-teal-800 border-teal-200',
-  [Tag.URGENT]: 'bg-rose-100 text-rose-800 border-rose-200',
-  [Tag.GENERAL]: 'bg-slate-100 text-slate-700 border-slate-200',
+  [Tag.SALES]: 'bg-violet-100 text-violet-800 border-violet-200',
+  [Tag.MISC]: 'bg-slate-100 text-slate-700 border-slate-200',
 };
 
 const priorityStyles: Record<PriorityType, string> = {
   [Priority.LOW]: 'bg-slate-100 text-slate-700 border-slate-200',
   [Priority.MEDIUM]: 'bg-amber-100 text-amber-800 border-amber-200',
   [Priority.HIGH]: 'bg-rose-100 text-rose-800 border-rose-200',
+  [Priority.URGENT]: 'bg-rose-200 text-rose-900 border-rose-300',
 };
 
 const statusStyles: Record<StatusType, string> = {

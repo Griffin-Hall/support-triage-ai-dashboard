@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../api/client';
 import { useAISettings } from '../context/AISettingsContext';
 import { AIProvider, type AIProviderType } from '../types';
@@ -27,6 +27,18 @@ export default function AISettingsModal({ open, onClose }: AISettingsModalProps)
   const [keyInputs, setKeyInputs] = useState<Record<AIProviderType, string>>(EMPTY_KEYS);
   const [notice, setNotice] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const handleClose = useCallback(() => {
+    if (saving || testing) {
+      return;
+    }
+
+    onClose();
+  }, [onClose, saving, testing]);
 
   useEffect(() => {
     if (!open || !settings) {
@@ -45,17 +57,69 @@ export default function AISettingsModal({ open, onClose }: AISettingsModalProps)
     return map;
   }, [settings]);
 
-  if (!open) {
-    return null;
-  }
-
-  const handleClose = () => {
-    if (saving || testing) {
+  useEffect(() => {
+    if (!open) {
       return;
     }
 
-    onClose();
-  };
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleClose();
+        return;
+      }
+
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      const dialog = modalRef.current;
+      if (!dialog) {
+        return;
+      }
+
+      const focusableElements = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((node) => node.offsetParent !== null);
+
+      if (focusableElements.length === 0) {
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+        return;
+      }
+
+      if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, handleClose]);
+
+  if (!open) {
+    return null;
+  }
 
   const upsertPendingKeys = async (): Promise<void> => {
     const keysPayload = Object.entries(keyInputs).reduce<Partial<Record<AIProviderType, string>>>((acc, [provider, key]) => {
@@ -123,16 +187,34 @@ export default function AISettingsModal({ open, onClose }: AISettingsModalProps)
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4">
-      <div className="w-full max-w-3xl rounded-3xl border border-white/30 bg-white shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          handleClose();
+        }
+      }}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        className="w-full max-w-3xl rounded-3xl border border-white/30 bg-white shadow-2xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">AI Engine Settings</h2>
-            <p className="mt-1 text-sm text-slate-600">
+            <h2 id={titleId} className="text-lg font-semibold text-slate-900">
+              AI Engine Settings
+            </h2>
+            <p id={descriptionId} className="mt-1 text-sm text-slate-600">
               Choose a provider, set API keys, and validate connectivity before running triage.
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={handleClose}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"

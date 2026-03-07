@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, ticketsApi } from '../api/client';
+import { ticketsApi } from '../api/client';
 import Badge from '../components/Badge';
 import { useAISettings } from '../context/AISettingsContext';
 import { Priority, Status, Tag, type PriorityType, type TagType, type Ticket } from '../types';
+import { aiUsageClasses, formatRelativeTime, getAiUsageSignal } from '../utils/ticketPresentation';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -28,6 +29,41 @@ function prettifyProvider(value: string | null | undefined): string {
   return value.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function normalizeTag(value: string | null | undefined): TagType {
+  if (!value) {
+    return Tag.MISC;
+  }
+
+  const normalized = value.toUpperCase();
+
+  if (normalized === 'GENERAL' || normalized === 'ACCOUNT' || normalized === 'URGENT') {
+    return Tag.MISC;
+  }
+
+  return [Tag.BILLING, Tag.TECHNICAL, Tag.SALES, Tag.MISC].includes(normalized as TagType)
+    ? (normalized as TagType)
+    : Tag.MISC;
+}
+
+function normalizePriority(value: string | null | undefined): PriorityType {
+  if (!value) {
+    return Priority.MEDIUM;
+  }
+
+  const normalized = value.toUpperCase();
+  if (normalized === 'CRITICAL') {
+    return Priority.URGENT;
+  }
+
+  return [Priority.LOW, Priority.MEDIUM, Priority.HIGH, Priority.URGENT].includes(normalized as PriorityType)
+    ? (normalized as PriorityType)
+    : Priority.MEDIUM;
+}
+
+function emitTicketsUpdated() {
+  window.dispatchEvent(new Event('tickets-updated'));
+}
+
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -41,7 +77,7 @@ export default function TicketDetailPage() {
 
   const [finalReply, setFinalReply] = useState('');
   const [acceptedSuggestion, setAcceptedSuggestion] = useState(false);
-  const [selectedTag, setSelectedTag] = useState<TagType>(Tag.GENERAL);
+  const [selectedTag, setSelectedTag] = useState<TagType>(Tag.MISC);
   const [selectedPriority, setSelectedPriority] = useState<PriorityType>(Priority.MEDIUM);
 
   const activeProviderInfo = settings?.activeProvider
@@ -66,12 +102,12 @@ export default function TicketDetailPage() {
       if (data.aiAnalysis) {
         setFinalReply(data.aiAnalysis.finalReply || data.aiAnalysis.aiSuggestedReply || '');
         setAcceptedSuggestion(data.aiAnalysis.acceptedByAgent || false);
-        setSelectedTag(data.aiAnalysis.aiTag);
-        setSelectedPriority(data.aiAnalysis.aiPriority);
+        setSelectedTag(normalizeTag(data.aiAnalysis.aiTag));
+        setSelectedPriority(normalizePriority(data.aiAnalysis.aiPriority));
       } else {
         setFinalReply('');
         setAcceptedSuggestion(false);
-        setSelectedTag(Tag.GENERAL);
+        setSelectedTag(Tag.MISC);
         setSelectedPriority(Priority.MEDIUM);
       }
     } catch (err) {
@@ -97,16 +133,9 @@ export default function TicketDetailPage() {
       }
 
       await loadTicket(id);
+      emitTicketsUpdated();
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.code === 'AI_NOT_CONFIGURED' || err.code === 'AI_PROVIDER_KEY_MISSING') {
-          setError('AI is not configured. Use the AI Engine button in the top bar to select a provider and add an API key.');
-        } else {
-          setError(err.message);
-        }
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to generate AI output');
-      }
+      setError(err instanceof Error ? err.message : 'Failed to generate AI output');
     } finally {
       setAiLoading(false);
     }
@@ -129,6 +158,7 @@ export default function TicketDetailPage() {
       });
 
       await loadTicket(id);
+      emitTicketsUpdated();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send reply');
     } finally {
@@ -165,6 +195,9 @@ export default function TicketDetailPage() {
 
   const isClosed = ticket.status === Status.CLOSED;
   const hasAnalysis = !!ticket.aiAnalysis;
+  const aiUsage = getAiUsageSignal(ticket);
+  const hasDraftInProgress = !isClosed && finalReply.trim().length > 0;
+  const queueLabel = ticket.queue || ticket.aiAnalysis?.queue || null;
 
   const providerLabel =
     ticket.aiAnalysis?.aiProvider && ticket.aiAnalysis.aiProvider !== 'MANUAL'
@@ -183,18 +216,32 @@ export default function TicketDetailPage() {
           Back to queue
         </button>
         <div className="flex items-center gap-2">
+          {aiUsage && (
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${aiUsageClasses(aiUsage.kind)}`}>
+              {aiUsage.label}
+            </span>
+          )}
+          {hasDraftInProgress && (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+              Draft
+            </span>
+          )}
           <Badge type="status" value={ticket.status} />
           <span className="text-xs font-mono text-slate-400">#{ticket.id.slice(0, 8)}</span>
         </div>
       </div>
 
-      {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+      {error && (
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      )}
 
       {!aiConfigured && !hasAnalysis && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <p className="font-semibold">AI not configured</p>
+          <p className="font-semibold">AI provider not configured</p>
           <p className="mt-1">
-            Configure an AI provider to auto-classify tickets and draft responses. Manual tagging and manual replies remain available.
+            You can still run keyword-based fallback classification and routing. Configure a provider for model-based analysis.
           </p>
           <button
             type="button"
@@ -208,23 +255,38 @@ export default function TicketDetailPage() {
 
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Original message</p>
+          <section
+            aria-labelledby="ticket-original-message-heading"
+            className="rounded-3xl border border-sky-200/80 bg-gradient-to-br from-sky-50/70 via-white to-white p-5 shadow-sm backdrop-blur"
+          >
+            <div className="flex items-center gap-2">
+              <h2 id="ticket-original-message-heading" className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-800">
+                Original message
+              </h2>
+              <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sky-700">
+                Customer Message
+              </span>
+            </div>
             <h1 className="mt-2 text-2xl font-bold text-slate-900">{ticket.subject}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
               <span className="rounded-full bg-slate-100 px-3 py-1">{ticket.customerName}</span>
               <span className="rounded-full bg-slate-100 px-3 py-1">{ticket.customerEmail}</span>
-              <span className="rounded-full bg-slate-100 px-3 py-1">Received {formatDate(ticket.createdAt)}</span>
+              <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">Received {formatRelativeTime(ticket.createdAt)}</span>
+              <time dateTime={ticket.createdAt} className="rounded-full bg-slate-100 px-3 py-1">
+                {formatDate(ticket.createdAt)}
+              </time>
             </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+            <div className="mt-4 rounded-2xl border border-sky-200 bg-white p-4 text-sm leading-6 text-slate-700">
               {ticket.body}
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
+          <section aria-labelledby="ticket-ai-analysis-heading" className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">AI analysis</p>
+                <h2 id="ticket-ai-analysis-heading" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+                  AI analysis
+                </h2>
                 <p className="mt-1 text-sm text-slate-600">
                   AI suggested these tags and drafted this reply; you can edit everything before sending.
                 </p>
@@ -245,9 +307,8 @@ export default function TicketDetailPage() {
                 >
                   <option value={Tag.BILLING}>Billing</option>
                   <option value={Tag.TECHNICAL}>Technical</option>
-                  <option value={Tag.ACCOUNT}>Account</option>
-                  <option value={Tag.URGENT}>Urgent</option>
-                  <option value={Tag.GENERAL}>General</option>
+                  <option value={Tag.SALES}>Sales</option>
+                  <option value={Tag.MISC}>Misc</option>
                 </select>
               </label>
 
@@ -259,22 +320,30 @@ export default function TicketDetailPage() {
                   disabled={isClosed}
                   className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)] disabled:cursor-not-allowed disabled:bg-slate-100"
                 >
+                  <option value={Priority.URGENT}>Urgent</option>
                   <option value={Priority.HIGH}>High</option>
                   <option value={Priority.MEDIUM}>Medium</option>
                   <option value={Priority.LOW}>Low</option>
                 </select>
               </label>
             </div>
+            {ticket.aiAnalysis?.needsReview && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-amber-700">
+                Needs review
+              </div>
+            )}
           </section>
 
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
+          <section aria-labelledby="ticket-ai-draft-heading" className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-slate-900">AI Draft Reply</p>
+              <h2 id="ticket-ai-draft-heading" className="text-sm font-semibold text-slate-900">
+                AI Draft Reply
+              </h2>
               {!isClosed && (
                 <button
                   type="button"
                   onClick={() => void triggerAnalyzeOrRegenerate()}
-                  disabled={aiLoading || !aiConfigured}
+                  disabled={aiLoading}
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {hasAnalysis ? 'Regenerate with AI' : 'Generate with AI'}
@@ -311,14 +380,16 @@ export default function TicketDetailPage() {
               <div className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
                 {aiConfigured
                   ? 'No AI draft yet. Generate analysis to produce a suggested reply.'
-                  : 'AI draft unavailable until a provider is configured. Continue with a manual reply below.'}
+                  : 'No provider configured: running analysis uses keyword fallback mode.'}
               </div>
             )}
           </section>
 
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
+          <section aria-labelledby="ticket-final-reply-heading" className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-sm backdrop-blur">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-900">Final Reply</p>
+              <h2 id="ticket-final-reply-heading" className="text-sm font-semibold text-slate-900">
+                Final Reply
+              </h2>
               {!isClosed && (
                 <label className="flex items-center gap-2 text-xs text-slate-600">
                   <input
@@ -333,6 +404,8 @@ export default function TicketDetailPage() {
             </div>
 
             <textarea
+              id="ticket-final-reply-input"
+              aria-label="Final reply to customer"
               value={finalReply}
               onChange={(event) => setFinalReply(event.target.value)}
               disabled={isClosed}
@@ -359,27 +432,61 @@ export default function TicketDetailPage() {
           </section>
         </div>
 
-        <aside className="space-y-4">
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Ticket status</p>
+        <aside aria-label="Ticket metadata and actions" className="space-y-4">
+          <section aria-labelledby="ticket-status-heading" className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <h2 id="ticket-status-heading" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+              Ticket status
+            </h2>
             <div className="mt-3 space-y-2 text-sm text-slate-600">
+              {queueLabel && (
+                <div className="flex items-center justify-between">
+                  <span>Queue</span>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                    {queueLabel}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span>Status</span>
                 <Badge type="status" value={ticket.status} />
               </div>
+              {aiUsage && (
+                <div className="flex items-center justify-between">
+                  <span>AI usage</span>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${aiUsageClasses(aiUsage.kind)}`}>
+                    {aiUsage.label}
+                  </span>
+                </div>
+              )}
+              {ticket.aiAnalysis?.needsReview && (
+                <div className="flex items-center justify-between">
+                  <span>Classification</span>
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+                    Needs Review
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span>Created</span>
-                <span className="font-medium text-slate-900">{formatDate(ticket.createdAt)}</span>
+                <time dateTime={ticket.createdAt} className="text-right">
+                  <span className="block font-semibold text-slate-900">{formatRelativeTime(ticket.createdAt)}</span>
+                  <span className="block text-[11px] text-slate-600">{formatDate(ticket.createdAt)}</span>
+                </time>
               </div>
               <div className="flex items-center justify-between">
                 <span>Updated</span>
-                <span className="font-medium text-slate-900">{formatDate(ticket.updatedAt)}</span>
+                <time dateTime={ticket.updatedAt} className="text-right">
+                  <span className="block font-semibold text-slate-900">{formatRelativeTime(ticket.updatedAt)}</span>
+                  <span className="block text-[11px] text-slate-600">{formatDate(ticket.updatedAt)}</span>
+                </time>
               </div>
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">AI actions</p>
+          <section aria-labelledby="ticket-ai-actions-heading" className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <h2 id="ticket-ai-actions-heading" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+              AI actions
+            </h2>
             <p className="mt-2 text-sm text-slate-600">
               {hasAnalysis
                 ? 'Re-run AI to refresh tags, priority, and draft based on the current ticket context.'
@@ -388,10 +495,10 @@ export default function TicketDetailPage() {
             <button
               type="button"
               onClick={() => void triggerAnalyzeOrRegenerate()}
-              disabled={aiLoading || isClosed || !aiConfigured}
+              disabled={aiLoading || isClosed}
               className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {aiLoading ? 'Generating...' : hasAnalysis ? 'Regenerate with AI' : 'Run AI Analysis'}
+              {aiLoading ? 'Generating...' : hasAnalysis ? 'Regenerate classification' : 'Run classification'}
             </button>
             {!aiConfigured && (
               <button
@@ -404,10 +511,12 @@ export default function TicketDetailPage() {
             )}
           </section>
 
-          <section className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Active AI engine</p>
+          <section aria-labelledby="ticket-active-engine-heading" className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <h2 id="ticket-active-engine-heading" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+              Active AI engine
+            </h2>
             <p className="mt-2 text-sm font-semibold text-slate-900">{activeProviderInfo?.displayName || 'Not configured'}</p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-600">
               The selected engine is used for both ticket classification and AI draft generation.
             </p>
           </section>

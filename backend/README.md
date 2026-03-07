@@ -37,14 +37,29 @@ npm run dev
 
 ### Tickets
 - `GET /tickets` - List tickets (paginated, with filters)
-  - Query params: `page`, `limit`, `tag`, `priority`, `status`, `search`
+  - Query params: `page`, `limit`, `queue`, `tag`, `priority`, `status`, `search`
+  - `queue` values: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`
 - `GET /tickets/:id` - Get single ticket with AI analysis
 - `POST /tickets/:id/analyze` - Run AI triage on ticket
 - `POST /tickets/:id/reply` - Submit final reply
   - Body: `{ finalReply: string, acceptedAiSuggestion: boolean }`
 
 ### Stats
-- `GET /stats` - Get aggregated statistics
+- `GET /stats` - Get aggregated statistics and KPI/chart data
+  - Existing fields:
+    - `overview`, `tags`, `priorities`, `aiPerformance`
+  - New fields:
+    - `kpis.ticketsClosed.total`
+    - `kpis.ticketsClosed.last7Days`
+    - `kpis.ticketsClosed.last30Days`
+    - `kpis.aiDraftsCreated.total`
+    - `kpis.aiDraftsCreated.last7Days`
+    - `kpis.aiDraftsCreated.last30Days`
+    - `dailyTickets[]` (`date`, `label`, `created`, `closed`, `synthetic`)
+    - `dailyTicketsMeta.windowDays`
+    - `dailyTicketsMeta.mode` (`simulated` or `actual`)
+    - `dailyTicketsMeta.simulatedRange` (min/max daily volume in demo mode)
+    - `queues` (open ticket counts by queue: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`)
 
 ### Health
 - `GET /health` - Health check
@@ -57,7 +72,28 @@ Create a `.env` file with:
 DATABASE_URL="file:./dev.db"
 PORT=3001
 FRONTEND_URL=http://localhost:5173
+DEMO_MODE=true
 ```
+
+## Demo Daily Ticket Simulation
+
+When `DEMO_MODE=true` (or when `NODE_ENV` is not `production` and `DEMO_MODE` is unset), `GET /stats` returns a synthetic 30-day `dailyTickets` series.
+
+- Created volume is deterministically simulated between **15 and 35 tickets/day**.
+- Closed volume is simulated from the created volume (daily close-rate band).
+- This simulation is only for KPI/chart visualization and keeps production mode data-driven.
+
+## Queue Routing Rules
+
+Tickets are routed into one primary queue using category + priority:
+
+1. `URGENT` queue: priority is `URGENT` or `HIGH`
+2. `BILLING` queue: category `BILLING` and not urgent
+3. `TECHNICAL` queue: category `TECHNICAL` and not urgent
+4. `SALES` queue: category `SALES` and not urgent
+5. `MISC` queue: everything else
+
+If AI is not configured, API key validation fails, or provider classification fails, the backend automatically uses keyword fallback classification. Ambiguous fallback cases route to `MISC` and are marked as `needsReview`.
 
 ## AI Triage Module
 

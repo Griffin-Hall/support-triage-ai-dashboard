@@ -4,18 +4,21 @@ import { ticketsApi } from '../api/client';
 import Badge from '../components/Badge';
 import StatsPanel from '../components/StatsPanel';
 import { useAISettings } from '../context/AISettingsContext';
+import { aiUsageClasses, formatRelativeTime, getAiUsageSignal } from '../utils/ticketPresentation';
 import {
   Priority,
+  Queue,
   Status,
   Tag,
   type PriorityType,
+  type QueueType,
   type StatusType,
   type TagType,
   type Ticket,
   type TicketFilters,
 } from '../types';
 
-function formatDate(dateStr: string): string {
+function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString('en-US', {
     month: 'short',
@@ -54,6 +57,7 @@ export default function TicketListPage() {
     () => ({
       page: parseInt(searchParams.get('page') || '1', 10),
       limit: 20,
+      queue: (searchParams.get('queue') as QueueType) || undefined,
       tag: (searchParams.get('tag') as TagType) || undefined,
       priority: (searchParams.get('priority') as PriorityType) || undefined,
       status: (searchParams.get('status') as StatusType) || undefined,
@@ -103,7 +107,7 @@ export default function TicketListPage() {
     : null;
 
   const urgentCount = tickets.filter(
-    (ticket) => ticket.aiAnalysis?.aiPriority === Priority.HIGH || ticket.aiAnalysis?.aiTag === Tag.URGENT,
+    (ticket) => ticket.aiAnalysis?.aiPriority === Priority.URGENT || ticket.aiAnalysis?.aiPriority === Priority.HIGH,
   ).length;
 
   return (
@@ -138,7 +142,7 @@ export default function TicketListPage() {
       <StatsPanel />
 
       <section className="rounded-3xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
             <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Search</span>
             <input
@@ -151,6 +155,22 @@ export default function TicketListPage() {
           </label>
 
           <label className="grid gap-1 text-sm text-slate-700">
+            <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Queue</span>
+            <select
+              value={filters.queue || ''}
+              onChange={(event) => updateFilters({ queue: (event.target.value as QueueType) || undefined })}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+            >
+              <option value="">All queues</option>
+              <option value={Queue.URGENT}>Urgent Queue</option>
+              <option value={Queue.BILLING}>Billing Queue</option>
+              <option value={Queue.TECHNICAL}>Technical Queue</option>
+              <option value={Queue.SALES}>Sales Channel</option>
+              <option value={Queue.MISC}>Misc</option>
+            </select>
+          </label>
+
+          <label className="grid gap-1 text-sm text-slate-700">
             <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Category</span>
             <select
               value={filters.tag || ''}
@@ -160,9 +180,8 @@ export default function TicketListPage() {
               <option value="">All categories</option>
               <option value={Tag.BILLING}>Billing</option>
               <option value={Tag.TECHNICAL}>Technical</option>
-              <option value={Tag.ACCOUNT}>Account</option>
-              <option value={Tag.URGENT}>Urgent</option>
-              <option value={Tag.GENERAL}>General</option>
+              <option value={Tag.SALES}>Sales</option>
+              <option value={Tag.MISC}>Misc</option>
             </select>
           </label>
 
@@ -175,6 +194,7 @@ export default function TicketListPage() {
             >
               <option value="">All priorities</option>
               <option value={Priority.HIGH}>High</option>
+              <option value={Priority.URGENT}>Urgent</option>
               <option value={Priority.MEDIUM}>Medium</option>
               <option value={Priority.LOW}>Low</option>
             </select>
@@ -205,7 +225,7 @@ export default function TicketListPage() {
       </section>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           <p>{error}</p>
           <button
             type="button"
@@ -221,12 +241,12 @@ export default function TicketListPage() {
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Queue</h4>
-            <p className="text-xs text-slate-500">Workspace ? Queues ? Tickets</p>
+            <p className="text-xs text-slate-600">Workspace / Queues / Tickets</p>
           </div>
-          <p className="text-xs font-medium text-slate-500">{pagination.total} tickets</p>
+          <p className="text-xs font-medium text-slate-600">{pagination.total} tickets</p>
         </div>
 
-        <div className="divide-y divide-slate-200">
+        <div role="list" aria-label="Tickets in current queue" className="divide-y divide-slate-200">
           {loading &&
             Array.from({ length: 6 }).map((_, index) => (
               <div key={index} className="animate-pulse px-5 py-4">
@@ -255,48 +275,71 @@ export default function TicketListPage() {
           {!loading &&
             tickets.map((ticket) => {
               const isUrgent =
-                ticket.aiAnalysis?.aiPriority === Priority.HIGH || ticket.aiAnalysis?.aiTag === Tag.URGENT;
+                ticket.aiAnalysis?.aiPriority === Priority.URGENT || ticket.aiAnalysis?.aiPriority === Priority.HIGH;
+              const aiUsage = getAiUsageSignal(ticket);
+              const aiTagLabel = ticket.aiAnalysis?.aiTag ? `${ticket.aiAnalysis.aiTag.toLowerCase()} category` : 'no category';
+              const priorityLabel = ticket.aiAnalysis?.aiPriority
+                ? `${ticket.aiAnalysis.aiPriority.toLowerCase()} priority`
+                : 'priority pending';
+              const statusLabel = ticket.status.toLowerCase();
 
               return (
-                <button
-                  key={ticket.id}
-                  type="button"
-                  onClick={() => navigate(`/tickets/${ticket.id}`)}
-                  className={`group w-full border-l-4 px-5 py-4 text-left transition ${
-                    isUrgent
-                      ? 'border-l-rose-400 bg-rose-50/60 hover:bg-rose-50'
-                      : 'border-l-transparent hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900 transition group-hover:text-slate-950">{ticket.subject}</p>
-                        <Badge type="status" value={ticket.status} />
-                        {ticket.aiAnalysis ? (
-                          <>
-                            <Badge type="tag" value={ticket.aiAnalysis.aiTag} />
-                            <Badge type="priority" value={ticket.aiAnalysis.aiPriority} />
-                          </>
-                        ) : (
-                          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
-                            Pending AI
-                          </span>
-                        )}
+                <div key={ticket.id} role="listitem">
+                  <button
+                    type="button"
+                    aria-label={`${ticket.subject}. ${statusLabel}. ${priorityLabel}. ${aiTagLabel}. Open ticket details.`}
+                    onClick={() => navigate(`/tickets/${ticket.id}`)}
+                    className={`group w-full border-l-4 px-5 py-4 text-left transition ${
+                      isUrgent
+                        ? 'border-l-rose-400 bg-rose-50/60 hover:bg-rose-50'
+                        : 'border-l-transparent hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-slate-900 transition group-hover:text-slate-950">{ticket.subject}</p>
+                          <Badge type="status" value={ticket.status} />
+                          {ticket.aiAnalysis ? (
+                            <>
+                              <Badge type="tag" value={ticket.aiAnalysis.aiTag} />
+                              <Badge type="priority" value={ticket.aiAnalysis.aiPriority} />
+                              {aiUsage && (
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${aiUsageClasses(aiUsage.kind)}`}
+                                >
+                                  {aiUsage.label}
+                                </span>
+                              )}
+                              {ticket.aiAnalysis.needsReview && (
+                                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+                                  Needs Review
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+                              Pending AI
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="mt-2 text-sm text-slate-600">{snippet(ticket.body)}</p>
+                        <p className="mt-2 text-xs text-slate-600">
+                          {ticket.customerName} ({ticket.customerEmail})
+                        </p>
                       </div>
 
-                      <p className="mt-2 text-sm text-slate-600">{snippet(ticket.body)}</p>
-                      <p className="mt-2 text-xs text-slate-500">
-                        {ticket.customerName} ({ticket.customerEmail})
-                      </p>
+                      <div className="shrink-0 text-right text-xs text-slate-600">
+                        <p className="font-semibold text-slate-800">{formatRelativeTime(ticket.createdAt)}</p>
+                        <time dateTime={ticket.createdAt} className="mt-1 block text-[11px] text-slate-600">
+                          {formatDateTime(ticket.createdAt)}
+                        </time>
+                        <p className="mt-1 font-mono text-[11px] text-slate-500">#{ticket.id.slice(0, 8)}</p>
+                      </div>
                     </div>
-
-                    <div className="shrink-0 text-right text-xs text-slate-500">
-                      <p>{formatDate(ticket.createdAt)}</p>
-                      <p className="mt-1 font-mono text-[11px] text-slate-400">#{ticket.id.slice(0, 8)}</p>
-                    </div>
-                  </div>
-                </button>
+                  </button>
+                </div>
               );
             })}
         </div>

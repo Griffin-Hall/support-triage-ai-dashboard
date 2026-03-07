@@ -3,16 +3,18 @@ import { AIProvider, type AIProviderType, getModelForProvider } from './provider
 export const Tag = {
   BILLING: 'BILLING',
   TECHNICAL: 'TECHNICAL',
-  ACCOUNT: 'ACCOUNT',
-  URGENT: 'URGENT',
-  GENERAL: 'GENERAL',
+  SALES: 'SALES',
+  MISC: 'MISC',
 } as const;
 
 export const Priority = {
   LOW: 'LOW',
   MEDIUM: 'MEDIUM',
   HIGH: 'HIGH',
+  URGENT: 'URGENT',
 } as const;
+
+export const KEYWORD_FALLBACK_PROVIDER = 'KEYWORD_FALLBACK';
 
 export type TagType = typeof Tag[keyof typeof Tag];
 export type PriorityType = typeof Priority[keyof typeof Priority];
@@ -29,44 +31,110 @@ export interface TriageResult {
   priority: PriorityType;
   suggestedReply: string;
   confidence: number;
-  provider: AIProviderType;
+  provider: string;
   model: string;
+  usedFallback: boolean;
+  needsReview: boolean;
 }
 
 export interface CallAiOptions {
   apiKey?: string;
 }
 
-const keywordRules: Array<{
+interface CategoryRule {
   keywords: string[];
   tag: TagType;
-  priority: PriorityType;
-  exclude?: string[];
-}> = [
+}
+
+interface CategoryResult {
+  tag: TagType;
+  confidence: number;
+  needsReview: boolean;
+}
+
+const categoryRules: CategoryRule[] = [
   {
-    keywords: ['urgent', 'asap', 'immediately', 'critical', 'down', 'outage', 'breach', 'compromised', 'security', 'hacked'],
-    tag: Tag.URGENT,
-    priority: Priority.HIGH,
-  },
-  {
-    keywords: ['refund', 'charge', 'billing', 'invoice', 'payment', 'subscription', 'price', 'cost', 'money', 'credit card', 'charged', 'upgrade', 'plan'],
+    keywords: [
+      'refund',
+      'charge',
+      'billing',
+      'invoice',
+      'payment',
+      'subscription',
+      'price',
+      'cost',
+      'credit card',
+      'charged',
+      'upgrade',
+      'plan',
+      'discount',
+      'renewal',
+      'receipt',
+    ],
     tag: Tag.BILLING,
-    priority: Priority.MEDIUM,
-    exclude: ['urgent', 'critical'],
   },
   {
-    keywords: ['error', 'bug', 'crash', 'not working', 'broken', 'failed', 'api', 'integration', 'slow', 'performance', 'timeout', '500', '404', 'exception', 'issue'],
+    keywords: [
+      'error',
+      'bug',
+      'crash',
+      'not working',
+      'broken',
+      'failed',
+      'api',
+      'integration',
+      'slow',
+      'performance',
+      'timeout',
+      '500',
+      '404',
+      'exception',
+      'outage',
+      'latency',
+      'incident',
+      'cannot access',
+    ],
     tag: Tag.TECHNICAL,
-    priority: Priority.MEDIUM,
-    exclude: ['urgent', 'critical'],
   },
   {
-    keywords: ['login', 'password', 'account', 'access', 'forgot', 'locked', '2fa', 'two-factor', 'authentication', 'sign in', 'reset'],
-    tag: Tag.ACCOUNT,
-    priority: Priority.MEDIUM,
-    exclude: ['urgent', 'critical'],
+    keywords: [
+      'pricing',
+      'quote',
+      'demo',
+      'trial',
+      'enterprise',
+      'purchase',
+      'buy',
+      'upgrade plan',
+      'seats',
+      'proposal',
+      'sales',
+      'contract',
+      'rfp',
+      'subscription options',
+    ],
+    tag: Tag.SALES,
   },
 ];
+
+const urgentSignals = [
+  'urgent',
+  'asap',
+  'immediately',
+  'critical',
+  'outage',
+  'down',
+  'breach',
+  'security',
+  'hacked',
+  'production down',
+  'sev1',
+  'p1',
+  'cannot access',
+  'data loss',
+];
+
+const highSignals = ['blocked', 'not working', 'failure', 'failing', 'error', 'timeout', 'degraded', 'slow'];
 
 function normalizeText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
@@ -77,7 +145,8 @@ function countKeywords(text: string, keywords: string[]): number {
   let count = 0;
 
   for (const keyword of keywords) {
-    const regex = new RegExp(`\\b${keyword}\\b`, 'g');
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'g');
     const matches = normalized.match(regex);
     if (matches) {
       count += matches.length;
@@ -93,7 +162,7 @@ function pickGreeting(customerName: string): string {
   return greetings[Math.floor(Math.random() * greetings.length)];
 }
 
-function pickClosing(provider: AIProviderType): string {
+function pickClosing(provider: string): string {
   if (provider === AIProvider.GEMINI) {
     return 'Thanks for your patience,\nSupport Team';
   }
@@ -102,20 +171,25 @@ function pickClosing(provider: AIProviderType): string {
     return 'We are here if anything else comes up.\nSupport Team';
   }
 
+  if (provider === KEYWORD_FALLBACK_PROVIDER) {
+    return 'Thank you,\nSupport Team';
+  }
+
   return 'Best regards,\nSupport Team';
 }
 
-function generateSuggestedReply(tag: TagType, ticket: TicketInput, provider: AIProviderType): string {
+function generateSuggestedReply(tag: TagType, ticket: TicketInput, provider: string): string {
   const greeting = pickGreeting(ticket.customerName);
   const closing = pickClosing(provider);
 
-  const providerNotes: Record<AIProviderType, string> = {
+  const providerNotes: Record<string, string> = {
     [AIProvider.OPENAI]: 'I reviewed the details you shared and outlined next steps below.',
     [AIProvider.GEMINI]: 'I checked your request and prepared a fast resolution path below.',
     [AIProvider.KIMI_CODE_2_5]: 'I reviewed your case and listed the recommended handling steps below.',
+    [KEYWORD_FALLBACK_PROVIDER]: 'I reviewed your request and drafted a best-effort next step.',
   };
 
-  const intro = providerNotes[provider];
+  const intro = providerNotes[provider] ?? providerNotes[KEYWORD_FALLBACK_PROVIDER];
 
   switch (tag) {
     case Tag.BILLING:
@@ -123,9 +197,9 @@ function generateSuggestedReply(tag: TagType, ticket: TicketInput, provider: AIP
 
 ${intro}
 
-Thanks for contacting us about billing. I have reviewed your account and identified the issue. We are correcting it now and you should see the update reflected shortly.
+Thanks for contacting us about billing. I have reviewed your account details and started validation on the charge history.
 
-If anything in the charge history still looks incorrect, reply with the transaction date and amount and we will investigate immediately.
+If any amount still looks incorrect, please reply with the transaction date and amount so we can complete this quickly.
 
 ${closing}`;
 
@@ -134,42 +208,35 @@ ${closing}`;
 
 ${intro}
 
-Thanks for reporting this technical issue. To resolve this quickly, please share:
+Thanks for reporting this technical issue. To accelerate resolution, please share:
 1. Exact steps to reproduce
 2. Any error text or screenshots
 3. Browser or app version
 
-In parallel, we are checking platform logs for related errors.
+We are also checking platform logs on our side now.
 
 ${closing}`;
 
-    case Tag.ACCOUNT:
+    case Tag.SALES:
       return `${greeting}
 
 ${intro}
 
-I can help with account access. For security, please confirm the account email and your most recent successful login time. Once verified, I can proceed with reset and recovery steps.
+Thanks for your interest in expanding with us. I have shared your request with our sales team so they can provide the right plan guidance and pricing details.
+
+Please let us know your target seat count and timeline so we can tailor recommendations.
 
 ${closing}`;
 
-    case Tag.URGENT:
-      return `${greeting}
-
-${intro}
-
-We are treating this as high priority and escalating immediately. You can expect an initial update within 30 minutes and regular follow-ups until resolution.
-
-Reference: #${ticket.id.slice(0, 8).toUpperCase()}
-
-${closing}`;
-
-    case Tag.GENERAL:
+    case Tag.MISC:
     default:
       return `${greeting}
 
 ${intro}
 
-Thanks for reaching out. We have logged your request and are reviewing it with the relevant team. We will follow up with specific guidance shortly.
+Thanks for reaching out. We have logged your request and routed it to the appropriate team for review.
+
+We will follow up with specific guidance shortly.
 
 ${closing}`;
   }
@@ -177,11 +244,15 @@ ${closing}`;
 
 function toTag(value: string | undefined): TagType {
   if (!value) {
-    return Tag.GENERAL;
+    return Tag.MISC;
   }
 
   const normalized = value.toUpperCase();
-  return (Object.values(Tag) as string[]).includes(normalized) ? (normalized as TagType) : Tag.GENERAL;
+  if (normalized === 'GENERAL' || normalized === 'ACCOUNT' || normalized === 'URGENT') {
+    return Tag.MISC;
+  }
+
+  return (Object.values(Tag) as string[]).includes(normalized) ? (normalized as TagType) : Tag.MISC;
 }
 
 function toPriority(value: string | undefined): PriorityType {
@@ -190,9 +261,99 @@ function toPriority(value: string | undefined): PriorityType {
   }
 
   const normalized = value.toUpperCase();
+  if (normalized === 'CRITICAL') {
+    return Priority.URGENT;
+  }
+
   return (Object.values(Priority) as string[]).includes(normalized)
     ? (normalized as PriorityType)
     : Priority.MEDIUM;
+}
+
+function classifyCategory(text: string): CategoryResult {
+  const scores = categoryRules.map((rule) => ({
+    rule,
+    score: countKeywords(text, rule.keywords),
+  }));
+
+  scores.sort((left, right) => right.score - left.score);
+
+  const best = scores[0];
+  const second = scores[1];
+
+  if (!best || best.score === 0) {
+    return {
+      tag: Tag.MISC,
+      confidence: 0.45,
+      needsReview: true,
+    };
+  }
+
+  if (second && best.score === second.score) {
+    return {
+      tag: Tag.MISC,
+      confidence: 0.5,
+      needsReview: true,
+    };
+  }
+
+  if (second && best.score - second.score <= 1) {
+    return {
+      tag: Tag.MISC,
+      confidence: 0.55,
+      needsReview: true,
+    };
+  }
+
+  return {
+    tag: best.rule.tag,
+    confidence: Math.min(0.94, 0.62 + best.score * 0.08),
+    needsReview: false,
+  };
+}
+
+function classifyPriority(text: string, tag: TagType): PriorityType {
+  const normalized = normalizeText(text);
+  const urgentCount = urgentSignals.reduce((sum, signal) => sum + (normalized.includes(signal) ? 1 : 0), 0);
+  if (urgentCount > 0) {
+    return Priority.URGENT;
+  }
+
+  const highCount = highSignals.reduce((sum, signal) => sum + (normalized.includes(signal) ? 1 : 0), 0);
+  if (highCount >= 2) {
+    return Priority.HIGH;
+  }
+
+  if (tag === Tag.BILLING || tag === Tag.TECHNICAL || tag === Tag.SALES) {
+    return Priority.MEDIUM;
+  }
+
+  return Priority.LOW;
+}
+
+async function keywordTriage(
+  ticket: TicketInput,
+  providerLabel: string,
+  modelLabel: string,
+  usedFallback: boolean,
+): Promise<TriageResult> {
+  const text = `${ticket.subject} ${ticket.body}`;
+  const category = classifyCategory(text);
+  const priority = classifyPriority(text, category.tag);
+  const suggestedReply = generateSuggestedReply(category.tag, ticket, providerLabel);
+
+  await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 350));
+
+  return {
+    tag: category.tag,
+    priority,
+    suggestedReply,
+    confidence: category.confidence,
+    provider: providerLabel,
+    model: modelLabel,
+    usedFallback,
+    needsReview: category.needsReview || (usedFallback && category.tag === Tag.MISC),
+  };
 }
 
 async function callOpenAiForTicket(ticket: TicketInput, apiKey: string): Promise<TriageResult> {
@@ -214,7 +375,7 @@ async function callOpenAiForTicket(ticket: TicketInput, apiKey: string): Promise
           {
             role: 'system',
             content:
-              'You triage customer support emails. Return JSON with keys tag, priority, suggestedReply. Tag must be one of BILLING, TECHNICAL, ACCOUNT, URGENT, GENERAL. Priority must be LOW, MEDIUM, or HIGH. suggestedReply should be a concise and professional email draft.',
+              'You triage customer support emails. Return JSON with keys tag, priority, suggestedReply. Tag must be one of BILLING, TECHNICAL, SALES, MISC. Priority must be LOW, MEDIUM, HIGH, or URGENT. suggestedReply should be concise, professional, and agent-ready.',
           },
           {
             role: 'user',
@@ -261,6 +422,8 @@ async function callOpenAiForTicket(ticket: TicketInput, apiKey: string): Promise
       confidence: 0.93,
       provider: AIProvider.OPENAI,
       model: getModelForProvider(AIProvider.OPENAI),
+      usedFallback: false,
+      needsReview: false,
     };
   } finally {
     clearTimeout(timeout);
@@ -269,7 +432,7 @@ async function callOpenAiForTicket(ticket: TicketInput, apiKey: string): Promise
 
 export async function callAiForTicket(
   ticket: TicketInput,
-  provider: AIProviderType,
+  provider: AIProviderType | null,
   options: CallAiOptions = {},
 ): Promise<TriageResult> {
   if (provider === AIProvider.OPENAI && options.apiKey) {
@@ -277,56 +440,13 @@ export async function callAiForTicket(
       return await callOpenAiForTicket(ticket, options.apiKey);
     } catch (error) {
       console.error('OpenAI call failed, falling back to deterministic triage:', error);
+      return keywordTriage(ticket, KEYWORD_FALLBACK_PROVIDER, 'Keyword Heuristic v2', true);
     }
   }
 
-  const text = `${ticket.subject} ${ticket.body}`;
-
-  const scores = keywordRules.map((rule) => {
-    const matchCount = countKeywords(text, rule.keywords);
-    const excludeCount = rule.exclude ? countKeywords(text, rule.exclude) : 0;
-    const adjustedScore = excludeCount > 0 ? matchCount * 0.1 : matchCount;
-
-    return {
-      rule,
-      score: adjustedScore,
-    };
-  });
-
-  scores.sort((a, b) => b.score - a.score);
-  const bestMatch = scores[0];
-
-  let tag: TagType;
-  let priority: PriorityType;
-  let confidence: number;
-
-  if (bestMatch.score > 0) {
-    tag = bestMatch.rule.tag;
-    priority = bestMatch.rule.priority;
-    confidence = Math.min(0.95, 0.6 + bestMatch.score * 0.1);
-
-    const urgentSignals = ['down', 'outage', 'breach', 'asap', 'critical'];
-    const hasUrgentSignal = urgentSignals.some((keyword) => normalizeText(text).includes(keyword));
-
-    if (hasUrgentSignal && priority !== Priority.HIGH) {
-      priority = Priority.HIGH;
-    }
-  } else {
-    tag = Tag.GENERAL;
-    priority = Priority.LOW;
-    confidence = 0.5;
+  if (provider === AIProvider.GEMINI || provider === AIProvider.KIMI_CODE_2_5) {
+    return keywordTriage(ticket, provider, getModelForProvider(provider), false);
   }
 
-  const suggestedReply = generateSuggestedReply(tag, ticket, provider);
-
-  await new Promise((resolve) => setTimeout(resolve, 350 + Math.random() * 500));
-
-  return {
-    tag,
-    priority,
-    suggestedReply,
-    confidence,
-    provider,
-    model: getModelForProvider(provider),
-  };
+  return keywordTriage(ticket, KEYWORD_FALLBACK_PROVIDER, 'Keyword Heuristic v2', true);
 }
