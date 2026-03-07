@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-primary: #0f6cbd;
+  --brand-primary-strong: #0a4f90;
+  --brand-primary-soft: #dff0ff;
+  --brand-accent: #0f766e;
+  --brand-success: #15803d;
+  --brand-warning: #b45309;
+  --brand-error: #be123c;
+
+  --surface-page: #f2f6fb;
+  --surface-card: #ffffff;
+  --text-default: #0f172a;
+  --text-muted: #475569;
+}
+
+html {
+  font-family: 'Manrope', 'Avenir Next', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-default);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--surface-page);
+  color: var(--text-default);
+}
+
+.bg-app-surface {
+  background: linear-gradient(180deg, #f3f8ff 0%, #f7f9fc 40%, #eef3f9 100%);
+}
+
+.bg-app-gradient {
+  background-image:
+    radial-gradient(circle at 12% 15%, rgba(15, 108, 189, 0.14), transparent 35%),
+    radial-gradient(circle at 86% 10%, rgba(15, 118, 110, 0.11), transparent 30%),
+    radial-gradient(circle at 82% 82%, rgba(14, 116, 144, 0.08), transparent 30%);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #cde9ff;
+  color: #0f172a;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: #e2e8f0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
