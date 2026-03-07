@@ -118,14 +118,6 @@ FRONTEND_URL=http://localhost:5173
 ### Frontend
 Uses Vite's built-in proxy (configured in `vite.config.ts`) to forward `/api` to the backend.
 
-## Interview Talking Points
-
-1. **Architecture**: Clean separation of concerns with clear API boundaries
-2. **Type Safety**: Shared TypeScript types between frontend and backend
-3. **AI Integration**: Encapsulated AI layer that's easy to swap for real providers
-4. **Database Design**: Prisma ORM with proper relations and indexes
-5. **UX Considerations**: Loading states, error handling, optimistic updates
-6. **Extensibility**: Easy to add real AI, more filters, user auth, etc.
 
 ## License
 
