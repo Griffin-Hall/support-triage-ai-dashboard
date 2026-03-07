@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import ticketsRouter from './routes/tickets';
 import statsRouter from './routes/stats';
 import aiSettingsRouter from './routes/aiSettings';
-import { ensureDemoTickets } from './seedDemoTickets';
+import { backfillMissingTicketAnalyses, ensureDemoTickets } from './seedDemoTickets';
 
 dotenv.config();
 
@@ -48,6 +48,16 @@ async function startServer() {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
+
+    void backfillMissingTicketAnalyses()
+      .then((count) => {
+        if (count > 0) {
+          console.log(`Auto-classified ${count} tickets without AI analysis.`);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to auto-classify tickets:', error);
+      });
   });
 }
 

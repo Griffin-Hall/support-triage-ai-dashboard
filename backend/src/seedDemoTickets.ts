@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { callAiForTicket } from './ai/triage';
 
 const demoTickets: Array<{
   subject: string;
@@ -79,6 +80,76 @@ export async function ensureDemoTickets(): Promise<void> {
     });
 
     console.log(`Seeded ${demoTickets.length} demo tickets.`);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+export async function backfillMissingTicketAnalyses(): Promise<number> {
+  const prisma = new PrismaClient();
+
+  try {
+    const ticketsWithoutAnalysis = await prisma.ticket.findMany({
+      where: {
+        aiAnalysis: {
+          is: null,
+        },
+      },
+      select: {
+        id: true,
+        subject: true,
+        body: true,
+        customerName: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    if (ticketsWithoutAnalysis.length === 0) {
+      return 0;
+    }
+
+    let backfilled = 0;
+
+    for (const ticket of ticketsWithoutAnalysis) {
+      try {
+        const aiResult = await callAiForTicket(
+          {
+            id: ticket.id,
+            subject: ticket.subject,
+            body: ticket.body,
+            customerName: ticket.customerName,
+          },
+          null,
+        );
+
+        await prisma.ticketAIAnalysis.create({
+          data: {
+            ticketId: ticket.id,
+            aiTag: aiResult.tag,
+            aiPriority: aiResult.priority,
+            aiSuggestedReply: aiResult.suggestedReply,
+            aiProvider: aiResult.provider,
+            aiModel: aiResult.needsReview ? `${aiResult.model} (Needs review)` : aiResult.model,
+            acceptedByAgent: null,
+            finalReply: null,
+          },
+        });
+
+        backfilled += 1;
+      } catch (error) {
+        // Ignore duplicates from concurrent analyze requests; continue backfill.
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes('unique')) {
+          continue;
+        }
+
+        console.error(`Failed to auto-classify ticket ${ticket.id}:`, error);
+      }
+    }
+
+    return backfilled;
   } finally {
     await prisma.$disconnect();
   }
