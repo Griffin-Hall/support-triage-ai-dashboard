@@ -24,9 +24,13 @@ function getInitialTheme(): ThemeMode {
     return 'light';
   }
 
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') {
-    return stored;
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') {
+      return stored;
+    }
+  } catch {
+    return getSystemTheme();
   }
 
   return getSystemTheme();
@@ -37,7 +41,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    window.localStorage.setItem(STORAGE_KEY, theme);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, theme);
+    } catch {
+      // Ignore persistence failures in restricted storage contexts.
+    }
   }, [theme]);
 
   const value = useMemo(

@@ -86,8 +86,14 @@ export default function AppShell() {
   const loadQueueCounts = useCallback(async () => {
     try {
       const stats = await statsApi.getAll();
-      setQueueCounts(stats.queues);
-      setClosedCategoryCounts(stats.closedByTag);
+      setQueueCounts((current) => ({
+        ...current,
+        ...stats.queues,
+      }));
+      setClosedCategoryCounts((current) => ({
+        ...current,
+        ...(stats.closedByTag || {}),
+      }));
     } catch (error) {
       // Keep the previous counts when stats refresh fails.
     }
