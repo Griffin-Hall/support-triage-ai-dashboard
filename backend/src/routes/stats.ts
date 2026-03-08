@@ -10,7 +10,7 @@ const DEMO_DAILY_MIN = 15;
 const DEMO_DAILY_MAX = 35;
 
 type DailyCountRow = {
-  day: string;
+  day: string | Date;
   count: number | string | bigint;
 };
 
@@ -66,9 +66,28 @@ function parseCount(value: number | string | bigint): number {
 }
 
 function toCountMap(rows: DailyCountRow[]): Map<string, number> {
+  const normalizeDayKey = (value: string | Date): string => {
+    if (value instanceof Date) {
+      return toDateKey(value);
+    }
+
+    const trimmed = value.trim();
+    const directDayKeyPattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (directDayKeyPattern.test(trimmed)) {
+      return trimmed;
+    }
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return toDateKey(parsed);
+    }
+
+    return trimmed.slice(0, 10);
+  };
+
   return new Map(
     rows.map((row) => {
-      return [row.day, parseCount(row.count)];
+      return [normalizeDayKey(row.day), parseCount(row.count)];
     }),
   );
 }

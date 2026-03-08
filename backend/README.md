@@ -59,7 +59,7 @@ npm run dev
     - `dailyTicketsMeta.windowDays`
     - `dailyTicketsMeta.mode` (`simulated` or `actual`)
     - `dailyTicketsMeta.simulatedRange` (min/max daily volume in demo mode)
-    - `queues` (open ticket counts by queue: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`)
+    - `queues` (ticket counts by queue: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`, `CLOSED`)
 
 ### Health
 - `GET /health` - Health check
@@ -73,6 +73,7 @@ DATABASE_URL="file:./dev.db"
 PORT=3001
 FRONTEND_URL=http://localhost:5173
 DEMO_MODE=true
+AUTO_CLASSIFY_INTERVAL_MS=300000
 ```
 
 ## Demo Daily Ticket Simulation
@@ -93,6 +94,7 @@ Behavior:
 
 - On API startup, demo tickets seed automatically **only if** no tickets exist.
 - Startup also backfills AI analysis for tickets missing `TicketAIAnalysis`.
+- A periodic background backfill also runs every `AUTO_CLASSIFY_INTERVAL_MS` (default 5 minutes) so newly ingested tickets are auto-classified without manual Analyze clicks.
 
 Re-run options:
 

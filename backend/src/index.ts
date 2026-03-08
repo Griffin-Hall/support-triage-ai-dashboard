@@ -10,6 +10,11 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const AUTO_CLASSIFY_INTERVAL_MS = Math.max(
+  0,
+  Number.parseInt(process.env.AUTO_CLASSIFY_INTERVAL_MS || '300000', 10) || 300000,
+);
+let backfillInFlight = false;
 
 app.set('trust proxy', 1);
 
@@ -38,6 +43,24 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   res.status(500).json({ error: 'Internal server error' });
 });
 
+async function runBackfill(context: 'startup' | 'interval'): Promise<void> {
+  if (backfillInFlight) {
+    return;
+  }
+
+  backfillInFlight = true;
+  try {
+    const count = await backfillMissingTicketAnalyses();
+    if (count > 0) {
+      console.log(`Auto-classified ${count} tickets without AI analysis (${context}).`);
+    }
+  } catch (error) {
+    console.error(`Failed to auto-classify tickets (${context}):`, error);
+  } finally {
+    backfillInFlight = false;
+  }
+}
+
 async function startServer() {
   try {
     await ensureDemoTickets();
@@ -49,15 +72,15 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
 
-    void backfillMissingTicketAnalyses()
-      .then((count) => {
-        if (count > 0) {
-          console.log(`Auto-classified ${count} tickets without AI analysis.`);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to auto-classify tickets:', error);
-      });
+    void runBackfill('startup');
+
+    if (AUTO_CLASSIFY_INTERVAL_MS > 0) {
+      const interval = setInterval(() => {
+        void runBackfill('interval');
+      }, AUTO_CLASSIFY_INTERVAL_MS);
+
+      interval.unref();
+    }
   });
 }
 
