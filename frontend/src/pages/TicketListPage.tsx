@@ -150,7 +150,7 @@ export default function TicketListPage() {
               placeholder="Search subject, body, or customer"
               value={filters.search || ''}
               onChange={(event) => updateFilters({ search: event.target.value })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+              className="app-field rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
             />
           </label>
 
@@ -159,7 +159,7 @@ export default function TicketListPage() {
             <select
               value={filters.queue || ''}
               onChange={(event) => updateFilters({ queue: (event.target.value as QueueType) || undefined })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+              className="app-field rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
             >
               <option value="">All queues</option>
               <option value={Queue.URGENT}>Urgent Queue</option>
@@ -176,7 +176,7 @@ export default function TicketListPage() {
             <select
               value={filters.tag || ''}
               onChange={(event) => updateFilters({ tag: (event.target.value as TagType) || undefined })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+              className="app-field rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
             >
               <option value="">All categories</option>
               <option value={Tag.BILLING}>Billing</option>
@@ -191,7 +191,7 @@ export default function TicketListPage() {
             <select
               value={filters.priority || ''}
               onChange={(event) => updateFilters({ priority: (event.target.value as PriorityType) || undefined })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+              className="app-field rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
             >
               <option value="">All priorities</option>
               <option value={Priority.HIGH}>High</option>
@@ -207,7 +207,7 @@ export default function TicketListPage() {
               <select
                 value={filters.status || ''}
                 onChange={(event) => updateFilters({ status: (event.target.value as StatusType) || undefined })}
-                className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+                className="app-field min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
               >
                 <option value="">All</option>
                 <option value={Status.OPEN}>Open</option>

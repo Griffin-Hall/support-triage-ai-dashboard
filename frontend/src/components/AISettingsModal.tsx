@@ -293,7 +293,7 @@ export default function AISettingsModal({ open, onClose }: AISettingsModalProps)
                       }))
                     }
                     placeholder={providerInfo?.configured ? `Stored: ${providerInfo.maskedKey}` : 'Enter API key'}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
+                    className="app-field w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-primary-soft)]"
                   />
                 </label>
               );
