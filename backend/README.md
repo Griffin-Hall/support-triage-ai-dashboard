@@ -38,7 +38,7 @@ npm run dev
 ### Tickets
 - `GET /tickets` - List tickets (paginated, with filters)
   - Query params: `page`, `limit`, `queue`, `tag`, `priority`, `status`, `search`
-  - `queue` values: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`
+  - `queue` values: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`, `CLOSED`
 - `GET /tickets/:id` - Get single ticket with AI analysis
 - `POST /tickets/:id/analyze` - Run AI triage on ticket
 - `POST /tickets/:id/reply` - Submit final reply
@@ -80,18 +80,38 @@ DEMO_MODE=true
 When `DEMO_MODE=true` (or when `NODE_ENV` is not `production` and `DEMO_MODE` is unset), `GET /stats` returns a synthetic 30-day `dailyTickets` series.
 
 - Created volume is deterministically simulated between **15 and 35 tickets/day**.
-- Closed volume is simulated from the created volume (daily close-rate band).
-- This simulation is only for KPI/chart visualization and keeps production mode data-driven.
+- Closed volume is pulled from real ticket close activity (`Ticket.status = CLOSED` by day).
+- This keeps demo mode visually stable for intake while still reflecting real closure behavior.
+
+## Demo Ticket Seed Data
+
+Demo ticket fixtures live in:
+
+- `backend/src/seedDemoTickets.ts`
+
+Behavior:
+
+- On API startup, demo tickets seed automatically **only if** no tickets exist.
+- Startup also backfills AI analysis for tickets missing `TicketAIAnalysis`.
+
+Re-run options:
+
+1. Keep existing data and skip re-seed (default): just start backend normally.
+2. Force re-seed demo data:
+   - Set `FORCE_RESEED_DEMO_TICKETS=true`
+   - Start backend (`npm run dev` or `npm start`)
+   - This clears existing tickets/analyses and reseeds from `seedDemoTickets.ts`
 
 ## Queue Routing Rules
 
 Tickets are routed into one primary queue using category + priority:
 
-1. `URGENT` queue: priority is `URGENT` or `HIGH`
-2. `BILLING` queue: category `BILLING` and not urgent
-3. `TECHNICAL` queue: category `TECHNICAL` and not urgent
-4. `SALES` queue: category `SALES` and not urgent
-5. `MISC` queue: everything else
+1. `CLOSED` queue: any ticket with status `CLOSED`
+2. `URGENT` queue: status `OPEN` + priority `URGENT` or `HIGH`
+3. `BILLING` queue: status `OPEN` + category `BILLING` and not urgent
+4. `TECHNICAL` queue: status `OPEN` + category `TECHNICAL` and not urgent
+5. `SALES` queue: status `OPEN` + category `SALES` and not urgent
+6. `MISC` queue: remaining `OPEN` tickets
 
 If AI is not configured, API key validation fails, or provider classification fails, the backend automatically uses keyword fallback classification. Ambiguous fallback cases route to `MISC` and are marked as `needsReview`.
 

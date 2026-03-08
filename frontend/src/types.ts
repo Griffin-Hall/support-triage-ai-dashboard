@@ -23,6 +23,7 @@ export const Queue = {
   TECHNICAL: 'TECHNICAL',
   SALES: 'SALES',
   MISC: 'MISC',
+  CLOSED: 'CLOSED',
 } as const;
 
 export const AIProvider = {

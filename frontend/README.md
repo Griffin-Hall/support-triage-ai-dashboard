@@ -51,7 +51,7 @@ src/
 ## Features
 
 - View and filter tickets by tag, priority, status, or search
-- Queue-aware filtering and routing (`Urgent`, `Billing`, `Technical`, `Sales`, `Misc`)
+- Queue-aware filtering and routing (`Urgent`, `Billing`, `Technical`, `Sales`, `Misc`, `Closed Tickets`)
 - Live queue counts in left navigation (auto-refresh + ticket update events)
 - Run AI triage on tickets to get auto-tags and suggested replies
 - Accept or modify AI suggestions when replying

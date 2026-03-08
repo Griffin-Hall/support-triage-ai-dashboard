@@ -228,10 +228,11 @@ router.get('/', async (req, res) => {
       [TicketQueue.TECHNICAL]: 0,
       [TicketQueue.SALES]: 0,
       [TicketQueue.MISC]: 0,
+      [TicketQueue.CLOSED]: closedTickets,
     };
 
     for (const ticket of openTicketsForQueue) {
-      const queue = routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority);
+      const queue = routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority, 'OPEN');
       queues[queue] += 1;
     }
 
@@ -239,12 +240,11 @@ router.get('/', async (req, res) => {
     const closedByDay = toCountMap(closedByDayRows);
     const demoMode = isDemoModeEnabled();
 
-    // In demo mode we synthesize steady daily intake (15-35 tickets/day) for chart readability.
+    // In demo mode we synthesize created intake (15-35/day) but keep CLOSED series data-driven.
     const dailyTickets = dateWindow.map((dateKey) => {
       if (demoMode) {
         const created = deterministicRange(`created-${dateKey}`, DEMO_DAILY_MIN, DEMO_DAILY_MAX);
-        const closeRate = deterministicRange(`closed-rate-${dateKey}`, 45, 85) / 100;
-        const closed = Math.round(created * closeRate);
+        const closed = closedByDay.get(dateKey) ?? 0;
 
         return {
           date: dateKey,

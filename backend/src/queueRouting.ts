@@ -6,6 +6,7 @@ export const TicketQueue = {
   TECHNICAL: 'TECHNICAL',
   SALES: 'SALES',
   MISC: 'MISC',
+  CLOSED: 'CLOSED',
 } as const;
 
 export type TicketQueueType = typeof TicketQueue[keyof typeof TicketQueue];
@@ -16,6 +17,7 @@ export const TICKET_QUEUE_VALUES: TicketQueueType[] = [
   TicketQueue.TECHNICAL,
   TicketQueue.SALES,
   TicketQueue.MISC,
+  TicketQueue.CLOSED,
 ];
 
 const LEGACY_MISC_TAGS = new Set(['ACCOUNT', 'GENERAL']);
@@ -61,13 +63,26 @@ export function isUrgentClassification(tag: string | null | undefined, priority:
   return normalizedPriority === Priority.URGENT || normalizedPriority === Priority.HIGH || rawTag === 'URGENT';
 }
 
+function normalizeStatus(status: string | null | undefined): 'OPEN' | 'CLOSED' {
+  return (status || '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN';
+}
+
 // Primary queue routing rules:
-// 1) Urgent queue: highest-priority tickets (URGENT/HIGH).
-// 2) Billing queue: BILLING, non-urgent.
-// 3) Technical queue: TECHNICAL, non-urgent.
-// 4) Sales queue: SALES, non-urgent.
-// 5) Misc queue: everything else.
-export function routeTicketQueue(tag: string | null | undefined, priority: string | null | undefined): TicketQueueType {
+// 1) Closed queue: any CLOSED ticket.
+// 2) Urgent queue: highest-priority OPEN tickets (URGENT/HIGH).
+// 3) Billing queue: OPEN + BILLING + non-urgent.
+// 4) Technical queue: OPEN + TECHNICAL + non-urgent.
+// 5) Sales queue: OPEN + SALES + non-urgent.
+// 6) Misc queue: remaining OPEN tickets.
+export function routeTicketQueue(
+  tag: string | null | undefined,
+  priority: string | null | undefined,
+  status?: string | null,
+): TicketQueueType {
+  if (normalizeStatus(status) === 'CLOSED') {
+    return TicketQueue.CLOSED;
+  }
+
   if (isUrgentClassification(tag, priority)) {
     return TicketQueue.URGENT;
   }
@@ -106,12 +121,20 @@ function urgentAnalysisClause(): any {
 export function buildQueueWhereClause(queue: TicketQueueType): any {
   const urgentClause = urgentAnalysisClause();
 
+  if (queue === TicketQueue.CLOSED) {
+    return { status: 'CLOSED' };
+  }
+
   if (queue === TicketQueue.URGENT) {
-    return { aiAnalysis: { is: urgentClause } };
+    return {
+      status: 'OPEN',
+      aiAnalysis: { is: urgentClause },
+    };
   }
 
   if (queue === TicketQueue.BILLING) {
     return {
+      status: 'OPEN',
       aiAnalysis: {
         is: {
           AND: [{ aiTag: Tag.BILLING }, { NOT: urgentClause }],
@@ -122,6 +145,7 @@ export function buildQueueWhereClause(queue: TicketQueueType): any {
 
   if (queue === TicketQueue.TECHNICAL) {
     return {
+      status: 'OPEN',
       aiAnalysis: {
         is: {
           AND: [{ aiTag: Tag.TECHNICAL }, { NOT: urgentClause }],
@@ -132,6 +156,7 @@ export function buildQueueWhereClause(queue: TicketQueueType): any {
 
   if (queue === TicketQueue.SALES) {
     return {
+      status: 'OPEN',
       aiAnalysis: {
         is: {
           AND: [{ aiTag: Tag.SALES }, { NOT: urgentClause }],
@@ -141,6 +166,7 @@ export function buildQueueWhereClause(queue: TicketQueueType): any {
   }
 
   return {
+    status: 'OPEN',
     OR: [
       { aiAnalysis: { is: null } },
       {

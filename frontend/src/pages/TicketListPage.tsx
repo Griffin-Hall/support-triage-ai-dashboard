@@ -167,6 +167,7 @@ export default function TicketListPage() {
               <option value={Queue.TECHNICAL}>Technical Queue</option>
               <option value={Queue.SALES}>Sales Channel</option>
               <option value={Queue.MISC}>Misc</option>
+              <option value={Queue.CLOSED}>Closed Tickets</option>
             </select>
           </label>
 

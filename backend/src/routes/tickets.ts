@@ -106,7 +106,7 @@ function toPublicTicket(ticket: any) {
   return {
     ...ticket,
     aiAnalysis: ticket.aiAnalysis ? toPublicAnalysis(ticket.aiAnalysis) : undefined,
-    queue: routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority),
+    queue: routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority, ticket.status),
   };
 }
 
@@ -495,6 +495,7 @@ router.post('/:id/regenerate', async (req, res) => {
             aiSuggestedReply: aiResult.suggestedReply,
             aiProvider: aiResult.provider,
             aiModel: aiResult.needsReview ? `${aiResult.model} (Needs review)` : aiResult.model,
+            createdAt: new Date(),
             acceptedByAgent: null,
             finalReply: null,
           },

@@ -30,6 +30,7 @@ export default function AppShell() {
     [Queue.TECHNICAL]: 0,
     [Queue.SALES]: 0,
     [Queue.MISC]: 0,
+    [Queue.CLOSED]: 0,
   });
 
   const openSettingsModal = useCallback(() => {
@@ -189,6 +190,17 @@ export default function AppShell() {
                     <span>Misc</span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
                       {queueCounts[Queue.MISC]}
+                    </span>
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    className={`${navLinkClasses(matchesQueue(location.search, { queue: Queue.CLOSED, status: 'CLOSED' }))} justify-between`}
+                    to={`/?queue=${Queue.CLOSED}&status=CLOSED`}
+                  >
+                    <span>Closed Tickets</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                      {queueCounts[Queue.CLOSED]}
                     </span>
                   </Link>
                 </li>
