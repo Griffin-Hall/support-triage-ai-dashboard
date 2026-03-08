@@ -1,31 +1,34 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { normalizePriority, normalizeTag, routeTicketQueue, TicketQueue } from '../queueRouting';
+import { Priority, Tag } from '../ai/triage';
+import { isDemoModeEnabled } from '../demoMode';
+import { getDemoSessionId, getDemoTicketClosure } from '../demoSessionState';
+import { normalizePriority, normalizeTag, routeTicketQueue, TicketQueue, type TicketQueueType } from '../queueRouting';
 
 const prisma = new PrismaClient();
 const router = Router();
 
-const DAILY_WINDOW_DAYS = 30;
-const DEMO_DAILY_MIN = 15;
-const DEMO_DAILY_MAX = 35;
+const DAILY_WINDOW_DAYS = 67;
+const DEMO_CREATED_AVERAGE = 20;
+const DEMO_CLOSED_AVERAGE = 17;
+const DEMO_CREATED_SPREAD = 5;
+const DEMO_CLOSED_SPREAD = 4;
 
-type DailyCountRow = {
-  day: string | Date;
-  count: number | string | bigint;
-};
+type PriorityType = typeof Priority[keyof typeof Priority];
+type TagType = typeof Tag[keyof typeof Tag];
 
-type GroupByTagRow = {
-  aiTag: string;
-  _count: {
-    aiTag: number;
-  };
-};
-
-type GroupByPriorityRow = {
-  aiPriority: string;
-  _count: {
-    aiPriority: number;
-  };
+type TicketSnapshot = {
+  id: string;
+  status: 'OPEN' | 'CLOSED';
+  createdAt: Date;
+  updatedAt: Date;
+  hasAnalysis: boolean;
+  aiTag: string | null;
+  aiPriority: string | null;
+  aiSuggestedReply: string;
+  aiAnalysisCreatedAt: Date | null;
+  acceptedByAgent: boolean | null;
+  queue: TicketQueueType;
 };
 
 function toDateKey(date: Date): string {
@@ -53,69 +56,6 @@ function formatDateLabel(dateKey: string): string {
   });
 }
 
-function parseCount(value: number | string | bigint): number {
-  if (typeof value === 'number') {
-    return value;
-  }
-
-  if (typeof value === 'bigint') {
-    return Number(value);
-  }
-
-  return Number.parseInt(value, 10);
-}
-
-function toCountMap(rows: DailyCountRow[]): Map<string, number> {
-  const normalizeDayKey = (value: string | Date): string => {
-    if (value instanceof Date) {
-      return toDateKey(value);
-    }
-
-    const trimmed = value.trim();
-    const directDayKeyPattern = /^\d{4}-\d{2}-\d{2}$/;
-    if (directDayKeyPattern.test(trimmed)) {
-      return trimmed;
-    }
-
-    const parsed = new Date(trimmed);
-    if (!Number.isNaN(parsed.getTime())) {
-      return toDateKey(parsed);
-    }
-
-    return trimmed.slice(0, 10);
-  };
-
-  return new Map(
-    rows.map((row) => {
-      return [normalizeDayKey(row.day), parseCount(row.count)];
-    }),
-  );
-}
-
-function aggregateTagCounts(rows: GroupByTagRow[]): Array<{ tag: string; count: number }> {
-  const accumulator = new Map<string, number>();
-
-  for (const row of rows) {
-    const normalizedTag = normalizeTag(row.aiTag);
-    const next = (accumulator.get(normalizedTag) ?? 0) + row._count.aiTag;
-    accumulator.set(normalizedTag, next);
-  }
-
-  return Array.from(accumulator.entries()).map(([tag, count]) => ({ tag, count }));
-}
-
-function aggregatePriorityCounts(rows: GroupByPriorityRow[]): Array<{ priority: string; count: number }> {
-  const accumulator = new Map<string, number>();
-
-  for (const row of rows) {
-    const normalizedPriority = normalizePriority(row.aiPriority);
-    const next = (accumulator.get(normalizedPriority) ?? 0) + row._count.aiPriority;
-    accumulator.set(normalizedPriority, next);
-  }
-
-  return Array.from(accumulator.entries()).map(([priority, count]) => ({ priority, count }));
-}
-
 function hashString(input: string): number {
   let hash = 0;
 
@@ -127,17 +67,100 @@ function hashString(input: string): number {
   return Math.abs(hash);
 }
 
-function deterministicRange(seed: string, min: number, max: number): number {
-  const span = max - min + 1;
-  return min + (hashString(seed) % span);
+function deterministicOffset(seed: string, spread: number): number {
+  const span = spread * 2 + 1;
+  return (hashString(seed) % span) - spread;
 }
 
-function isDemoModeEnabled(): boolean {
-  if (process.env.DEMO_MODE) {
-    return ['1', 'true', 'yes'].includes(process.env.DEMO_MODE.trim().toLowerCase());
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function startOfDayDaysAgo(daysAgo: number): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date;
+}
+
+function buildSyntheticDailySeries(dateWindow: string[]) {
+  return dateWindow.map((dateKey) => {
+    const weekday = new Date(`${dateKey}T00:00:00.000Z`).getUTCDay();
+    const weekdayCreatedDrift = weekday === 1 || weekday === 2 ? 1 : weekday === 0 || weekday === 6 ? -2 : 0;
+    const weekdayClosedDrift = weekday === 1 ? 1 : weekday === 0 || weekday === 6 ? -1 : 0;
+
+    const created = clamp(
+      DEMO_CREATED_AVERAGE + deterministicOffset(`created-${dateKey}`, DEMO_CREATED_SPREAD) + weekdayCreatedDrift,
+      11,
+      33,
+    );
+    const rawClosed =
+      DEMO_CLOSED_AVERAGE + deterministicOffset(`closed-${dateKey}`, DEMO_CLOSED_SPREAD) + weekdayClosedDrift;
+    const closed = clamp(Math.min(rawClosed, created + 3), 8, 30);
+
+    return {
+      date: dateKey,
+      label: formatDateLabel(dateKey),
+      created,
+      closed,
+      synthetic: true,
+    };
+  });
+}
+
+function buildActualDailySeries(tickets: TicketSnapshot[], dateWindow: string[]) {
+  const createdMap = new Map<string, number>();
+  const closedMap = new Map<string, number>();
+  const allowedDays = new Set(dateWindow);
+
+  for (const ticket of tickets) {
+    const createdDay = toDateKey(ticket.createdAt);
+    if (allowedDays.has(createdDay)) {
+      createdMap.set(createdDay, (createdMap.get(createdDay) ?? 0) + 1);
+    }
+
+    if (ticket.status === 'CLOSED') {
+      const closedDay = toDateKey(ticket.updatedAt);
+      if (allowedDays.has(closedDay)) {
+        closedMap.set(closedDay, (closedMap.get(closedDay) ?? 0) + 1);
+      }
+    }
   }
 
-  return process.env.NODE_ENV !== 'production';
+  return dateWindow.map((dateKey) => ({
+    date: dateKey,
+    label: formatDateLabel(dateKey),
+    created: createdMap.get(dateKey) ?? 0,
+    closed: closedMap.get(dateKey) ?? 0,
+    synthetic: false,
+  }));
+}
+
+function toTicketSnapshot(ticket: any, demoSessionId: string | null): TicketSnapshot {
+  const closure = demoSessionId ? getDemoTicketClosure(demoSessionId, ticket.id) : null;
+  const effectiveStatus = closure ? 'CLOSED' : ticket.status === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  const aiTag = closure?.aiTag ?? ticket.aiAnalysis?.aiTag ?? null;
+  const aiPriority = closure?.aiPriority ?? ticket.aiAnalysis?.aiPriority ?? null;
+  const acceptedByAgent = closure?.acceptedAiSuggestion ?? ticket.aiAnalysis?.acceptedByAgent ?? null;
+  const hasAnalysis = !!ticket.aiAnalysis || !!closure;
+  const aiSuggestedReply = ticket.aiAnalysis?.aiSuggestedReply || '';
+  const aiAnalysisCreatedAt = ticket.aiAnalysis?.createdAt ?? (closure ? closure.closedAt : null);
+  const updatedAt = closure?.closedAt ?? ticket.updatedAt;
+  const queue = routeTicketQueue(aiTag, aiPriority, effectiveStatus);
+
+  return {
+    id: ticket.id,
+    status: effectiveStatus,
+    createdAt: ticket.createdAt,
+    updatedAt,
+    hasAnalysis,
+    aiTag,
+    aiPriority,
+    aiSuggestedReply,
+    aiAnalysisCreatedAt,
+    acceptedByAgent,
+    queue,
+  };
 }
 
 /**
@@ -146,142 +169,119 @@ function isDemoModeEnabled(): boolean {
  */
 router.get('/', async (req, res) => {
   try {
-    const now = new Date();
-    const last7Days = new Date(now);
-    last7Days.setDate(now.getDate() - 7);
-    const last30Days = new Date(now);
-    last30Days.setDate(now.getDate() - 30);
-
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
     const dateWindow = buildDateWindow(DAILY_WINDOW_DAYS);
-    const dailyWindowStart = new Date(`${dateWindow[0]}T00:00:00.000Z`);
+    const last7DaysStart = startOfDayDaysAgo(6);
+    const last30DaysStart = startOfDayDaysAgo(29);
 
-    const [
-      totalTickets,
-      openTickets,
-      closedTickets,
-      closedLast7Days,
-      closedLast30Days,
-      aiDraftsCreated,
-      aiDraftsCreatedLast7Days,
-      aiDraftsCreatedLast30Days,
-      tagCounts,
-      priorityCounts,
-      ticketsWithAnalysis,
-      decidedAnalyses,
-      acceptedAnalyses,
-      createdByDayRows,
-      closedByDayRows,
-      openTicketsForQueue,
-    ] = await Promise.all([
-      prisma.ticket.count(),
-      prisma.ticket.count({ where: { status: 'OPEN' } }),
-      prisma.ticket.count({ where: { status: 'CLOSED' } }),
-      prisma.ticket.count({ where: { status: 'CLOSED', updatedAt: { gte: last7Days } } }),
-      prisma.ticket.count({ where: { status: 'CLOSED', updatedAt: { gte: last30Days } } }),
-      prisma.ticketAIAnalysis.count({ where: { aiSuggestedReply: { not: '' } } }),
-      prisma.ticketAIAnalysis.count({
-        where: { aiSuggestedReply: { not: '' }, createdAt: { gte: last7Days } },
-      }),
-      prisma.ticketAIAnalysis.count({
-        where: { aiSuggestedReply: { not: '' }, createdAt: { gte: last30Days } },
-      }),
-      prisma.ticketAIAnalysis.groupBy({
-        by: ['aiTag'],
-        _count: {
-          aiTag: true,
-        },
-      }),
-      prisma.ticketAIAnalysis.groupBy({
-        by: ['aiPriority'],
-        _count: {
-          aiPriority: true,
-        },
-      }),
-      prisma.ticketAIAnalysis.count(),
-      prisma.ticketAIAnalysis.count({
-        where: {
-          acceptedByAgent: { not: null },
-        },
-      }),
-      prisma.ticketAIAnalysis.count({
-        where: {
-          acceptedByAgent: true,
-        },
-      }),
-      prisma.$queryRaw<DailyCountRow[]>`
-        SELECT date("createdAt") AS day, COUNT(*) AS count
-        FROM "Ticket"
-        WHERE "createdAt" >= ${dailyWindowStart}
-        GROUP BY date("createdAt")
-        ORDER BY day ASC
-      `,
-      prisma.$queryRaw<DailyCountRow[]>`
-        SELECT date("updatedAt") AS day, COUNT(*) AS count
-        FROM "Ticket"
-        WHERE "status" = 'CLOSED' AND "updatedAt" >= ${dailyWindowStart}
-        GROUP BY date("updatedAt")
-        ORDER BY day ASC
-      `,
-      prisma.ticket.findMany({
-        where: { status: 'OPEN' },
-        select: {
-          aiAnalysis: {
-            select: {
-              aiTag: true,
-              aiPriority: true,
-            },
-          },
-        },
-      }),
-    ]);
+    const rawTickets = await prisma.ticket.findMany({
+      include: {
+        aiAnalysis: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
 
-    const acceptanceRate = decidedAnalyses > 0 ? Math.round((acceptedAnalyses / decidedAnalyses) * 100) : 0;
+    const tickets = rawTickets.map((ticket) => toTicketSnapshot(ticket, demoSessionId));
+
+    const totalTickets = tickets.length;
+    const openTickets = tickets.filter((ticket) => ticket.status === 'OPEN').length;
+    const closedTickets = totalTickets - openTickets;
+    const ticketsWithAnalysis = tickets.filter((ticket) => ticket.hasAnalysis).length;
     const pendingAnalysis = totalTickets - ticketsWithAnalysis;
 
-    const tags = aggregateTagCounts(tagCounts as GroupByTagRow[]);
-    const priorities = aggregatePriorityCounts(priorityCounts as GroupByPriorityRow[]);
+    const closedLast7Days = tickets.filter(
+      (ticket) => ticket.status === 'CLOSED' && ticket.updatedAt >= last7DaysStart,
+    ).length;
+    const closedLast30Days = tickets.filter(
+      (ticket) => ticket.status === 'CLOSED' && ticket.updatedAt >= last30DaysStart,
+    ).length;
 
-    const queues = {
+    const aiDraftsCreated = tickets.filter(
+      (ticket) => ticket.hasAnalysis && ticket.aiSuggestedReply.trim().length > 0,
+    ).length;
+    const aiDraftsCreatedLast7Days = tickets.filter(
+      (ticket) =>
+        ticket.hasAnalysis &&
+        ticket.aiSuggestedReply.trim().length > 0 &&
+        !!ticket.aiAnalysisCreatedAt &&
+        ticket.aiAnalysisCreatedAt >= last7DaysStart,
+    ).length;
+    const aiDraftsCreatedLast30Days = tickets.filter(
+      (ticket) =>
+        ticket.hasAnalysis &&
+        ticket.aiSuggestedReply.trim().length > 0 &&
+        !!ticket.aiAnalysisCreatedAt &&
+        ticket.aiAnalysisCreatedAt >= last30DaysStart,
+    ).length;
+
+    const decidedAnalyses = tickets.filter((ticket) => ticket.hasAnalysis && ticket.acceptedByAgent !== null).length;
+    const acceptedAnalyses = tickets.filter((ticket) => ticket.hasAnalysis && ticket.acceptedByAgent === true).length;
+    const acceptanceRate = decidedAnalyses > 0 ? Math.round((acceptedAnalyses / decidedAnalyses) * 100) : 0;
+
+    const queueCounts: Record<TicketQueueType, number> = {
       [TicketQueue.URGENT]: 0,
       [TicketQueue.BILLING]: 0,
       [TicketQueue.TECHNICAL]: 0,
       [TicketQueue.SALES]: 0,
       [TicketQueue.MISC]: 0,
-      [TicketQueue.CLOSED]: closedTickets,
+      [TicketQueue.CLOSED]: 0,
     };
 
-    for (const ticket of openTicketsForQueue) {
-      const queue = routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority, 'OPEN');
-      queues[queue] += 1;
+    for (const ticket of tickets) {
+      queueCounts[ticket.queue] += 1;
     }
 
-    const createdByDay = toCountMap(createdByDayRows);
-    const closedByDay = toCountMap(closedByDayRows);
-    const demoMode = isDemoModeEnabled();
+    const categoryMixOrder = [
+      TicketQueue.URGENT,
+      TicketQueue.BILLING,
+      TicketQueue.TECHNICAL,
+      TicketQueue.SALES,
+      TicketQueue.MISC,
+    ] as const;
 
-    // In demo mode we synthesize created intake (15-35/day) but keep CLOSED series data-driven.
-    const dailyTickets = dateWindow.map((dateKey) => {
-      if (demoMode) {
-        const created = deterministicRange(`created-${dateKey}`, DEMO_DAILY_MIN, DEMO_DAILY_MAX);
-        const closed = closedByDay.get(dateKey) ?? 0;
+    const tags = categoryMixOrder.map((queue) => ({
+      tag: queue,
+      count: queueCounts[queue],
+    }));
 
-        return {
-          date: dateKey,
-          label: formatDateLabel(dateKey),
-          created,
-          closed,
-          synthetic: true,
-        };
+    const closedByTag: Record<TagType, number> = {
+      [Tag.BILLING]: 0,
+      [Tag.TECHNICAL]: 0,
+      [Tag.SALES]: 0,
+      [Tag.MISC]: 0,
+    };
+
+    const priorityCounts: Record<PriorityType, number> = {
+      [Priority.LOW]: 0,
+      [Priority.MEDIUM]: 0,
+      [Priority.HIGH]: 0,
+      [Priority.URGENT]: 0,
+    };
+
+    for (const ticket of tickets) {
+      const normalizedTag = normalizeTag(ticket.aiTag);
+      const normalizedPriority = normalizePriority(ticket.aiPriority);
+
+      if (ticket.status === 'CLOSED') {
+        closedByTag[normalizedTag] += 1;
       }
 
-      return {
-        date: dateKey,
-        label: formatDateLabel(dateKey),
-        created: createdByDay.get(dateKey) ?? 0,
-        closed: closedByDay.get(dateKey) ?? 0,
-        synthetic: false,
-      };
-    });
+      if (ticket.status === 'OPEN' && ticket.hasAnalysis) {
+        priorityCounts[normalizedPriority] += 1;
+      }
+    }
+
+    const priorities = [Priority.URGENT, Priority.HIGH, Priority.MEDIUM, Priority.LOW].map((priority) => ({
+      priority,
+      count: priorityCounts[priority],
+    }));
+
+    const dailyTickets = demoMode
+      ? buildSyntheticDailySeries(dateWindow)
+      : buildActualDailySeries(tickets, dateWindow);
 
     res.json({
       overview: {
@@ -317,12 +317,13 @@ router.get('/', async (req, res) => {
         mode: demoMode ? 'simulated' : 'actual',
         simulatedRange: demoMode
           ? {
-              min: DEMO_DAILY_MIN,
-              max: DEMO_DAILY_MAX,
+              createdAverage: DEMO_CREATED_AVERAGE,
+              closedAverage: DEMO_CLOSED_AVERAGE,
             }
           : null,
       },
-      queues,
+      queues: queueCounts,
+      closedByTag,
     });
   } catch (error) {
     console.error('Error fetching stats:', error);

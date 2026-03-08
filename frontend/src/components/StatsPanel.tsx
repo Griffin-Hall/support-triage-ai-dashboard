@@ -9,6 +9,14 @@ const accentByMetric: Record<string, string> = {
   pending: 'from-amber-700 to-amber-500',
 };
 
+const categoryLabel: Record<string, string> = {
+  URGENT: 'Urgent Queue',
+  BILLING: 'Billing Queue',
+  TECHNICAL: 'Technical Queue',
+  SALES: 'Sales Channel',
+  MISC: 'Misc',
+};
+
 export default function StatsPanel() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,7 +92,7 @@ export default function StatsPanel() {
             {stats.tags.length === 0 && <p className="text-xs text-slate-500">No analyzed tickets yet.</p>}
             {stats.tags.map((entry) => (
               <div key={entry.tag} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                <span className="text-xs font-semibold text-slate-600">{entry.tag}</span>
+                <span className="text-xs font-semibold text-slate-600">{categoryLabel[entry.tag] || entry.tag}</span>
                 <span className="text-sm font-semibold text-slate-900">{entry.count}</span>
               </div>
             ))}

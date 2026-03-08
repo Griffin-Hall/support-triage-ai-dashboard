@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import AISettingsModal from './AISettingsModal';
 import { useAISettings } from '../context/AISettingsContext';
+import { useTheme } from '../context/ThemeContext';
 import { statsApi } from '../api/client';
-import { Queue, type QueueType } from '../types';
+import { Queue, Tag, type QueueType, type TagType } from '../types';
 
 function navLinkClasses(active: boolean): string {
   return `flex items-center rounded-xl px-3 py-2 text-sm font-medium transition ${
@@ -19,11 +20,31 @@ function matchesQueue(search: string, expected: Record<string, string>): boolean
   return Object.entries(expected).every(([key, value]) => params.get(key) === value);
 }
 
+function matchesClosedCategory(search: string, tag?: TagType): boolean {
+  const params = new URLSearchParams(search);
+  const isClosedQueue = params.get('queue') === Queue.CLOSED && params.get('status') === 'CLOSED';
+
+  if (!isClosedQueue) {
+    return false;
+  }
+
+  const selectedTag = params.get('tag');
+
+  if (!tag) {
+    return !selectedTag;
+  }
+
+  return selectedTag === tag;
+}
+
 export default function AppShell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { settings } = useAISettings();
+  const { theme, toggleTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTriggerRef = useRef<HTMLElement | null>(null);
+  const [closedExpanded, setClosedExpanded] = useState(false);
   const [queueCounts, setQueueCounts] = useState<Record<QueueType, number>>({
     [Queue.URGENT]: 0,
     [Queue.BILLING]: 0,
@@ -31,6 +52,12 @@ export default function AppShell() {
     [Queue.SALES]: 0,
     [Queue.MISC]: 0,
     [Queue.CLOSED]: 0,
+  });
+  const [closedCategoryCounts, setClosedCategoryCounts] = useState<Record<TagType, number>>({
+    [Tag.BILLING]: 0,
+    [Tag.TECHNICAL]: 0,
+    [Tag.SALES]: 0,
+    [Tag.MISC]: 0,
   });
 
   const openSettingsModal = useCallback(() => {
@@ -60,6 +87,7 @@ export default function AppShell() {
     try {
       const stats = await statsApi.getAll();
       setQueueCounts(stats.queues);
+      setClosedCategoryCounts(stats.closedByTag);
     } catch (error) {
       // Keep the previous counts when stats refresh fails.
     }
@@ -84,6 +112,19 @@ export default function AppShell() {
     };
   }, [loadQueueCounts]);
 
+  const closedAnyActive =
+    matchesClosedCategory(location.search) ||
+    matchesClosedCategory(location.search, Tag.BILLING) ||
+    matchesClosedCategory(location.search, Tag.TECHNICAL) ||
+    matchesClosedCategory(location.search, Tag.SALES) ||
+    matchesClosedCategory(location.search, Tag.MISC);
+
+  useEffect(() => {
+    if (closedAnyActive) {
+      setClosedExpanded(true);
+    }
+  }, [closedAnyActive]);
+
   const providerMap = useMemo(() => {
     return new Map(settings?.providers.map((provider) => [provider.provider, provider]));
   }, [settings]);
@@ -100,6 +141,14 @@ export default function AppShell() {
     : isStatsPage
       ? 'Track closure throughput, AI draft usage, and daily intake trends.'
       : 'Smart inbox for support teams that triage and respond faster with AI assistance.';
+
+  const closedCategoryLinks: Array<{ label: string; tag?: TagType; count: number }> = [
+    { label: 'All', count: queueCounts[Queue.CLOSED] },
+    { label: 'Billing', tag: Tag.BILLING, count: closedCategoryCounts[Tag.BILLING] },
+    { label: 'Technical', tag: Tag.TECHNICAL, count: closedCategoryCounts[Tag.TECHNICAL] },
+    { label: 'Sales', tag: Tag.SALES, count: closedCategoryCounts[Tag.SALES] },
+    { label: 'Misc', tag: Tag.MISC, count: closedCategoryCounts[Tag.MISC] },
+  ];
 
   return (
     <div className="min-h-screen bg-app-surface">
@@ -193,20 +242,72 @@ export default function AppShell() {
                     </span>
                   </Link>
                 </li>
-                <li>
-                  <Link
-                    className={`${navLinkClasses(matchesQueue(location.search, { queue: Queue.CLOSED, status: 'CLOSED' }))} justify-between`}
-                    to={`/?queue=${Queue.CLOSED}&status=CLOSED`}
+                <li className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClosedExpanded((previous) => {
+                        const next = !previous;
+                        if (next) {
+                          navigate(`/?queue=${Queue.CLOSED}&status=CLOSED`);
+                        }
+                        return next;
+                      });
+                    }}
+                    className={`${navLinkClasses(closedAnyActive)} w-full justify-between`}
+                    aria-expanded={closedExpanded}
+                    aria-controls="closed-tickets-submenu"
                   >
-                    <span>Closed Tickets</span>
+                    <span className="flex items-center gap-2">
+                      <span>Closed Tickets</span>
+                      <span
+                        className={`inline-block text-[10px] transition ${closedExpanded ? 'rotate-180' : ''}`}
+                        aria-hidden="true"
+                      >
+                        v
+                      </span>
+                    </span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
                       {queueCounts[Queue.CLOSED]}
                     </span>
-                  </Link>
+                  </button>
+
+                  {closedExpanded && (
+                    <ul id="closed-tickets-submenu" className="ml-3 space-y-1 border-l border-slate-200 pl-3">
+                      {closedCategoryLinks.map((item) => {
+                        const isActive = matchesClosedCategory(location.search, item.tag);
+                        const href = item.tag
+                          ? `/?queue=${Queue.CLOSED}&status=CLOSED&tag=${item.tag}`
+                          : `/?queue=${Queue.CLOSED}&status=CLOSED`;
+
+                        return (
+                          <li key={item.label}>
+                            <Link className={`${navLinkClasses(isActive)} justify-between py-1.5 text-xs`} to={href}>
+                              <span>{item.label}</span>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                {item.count}
+                              </span>
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </li>
               </ul>
             </div>
           </nav>
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Appearance</p>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+            >
+              {theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            </button>
+          </div>
 
           <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
             <p className="font-semibold text-slate-800">How it works</p>

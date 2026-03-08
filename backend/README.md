@@ -46,20 +46,15 @@ npm run dev
 
 ### Stats
 - `GET /stats` - Get aggregated statistics and KPI/chart data
-  - Existing fields:
+  - Key fields:
     - `overview`, `tags`, `priorities`, `aiPerformance`
-  - New fields:
-    - `kpis.ticketsClosed.total`
-    - `kpis.ticketsClosed.last7Days`
-    - `kpis.ticketsClosed.last30Days`
-    - `kpis.aiDraftsCreated.total`
-    - `kpis.aiDraftsCreated.last7Days`
-    - `kpis.aiDraftsCreated.last30Days`
+    - `kpis.ticketsClosed.*` and `kpis.aiDraftsCreated.*`
     - `dailyTickets[]` (`date`, `label`, `created`, `closed`, `synthetic`)
-    - `dailyTicketsMeta.windowDays`
+    - `dailyTicketsMeta.windowDays` (67-day window)
     - `dailyTicketsMeta.mode` (`simulated` or `actual`)
-    - `dailyTicketsMeta.simulatedRange` (min/max daily volume in demo mode)
-    - `queues` (ticket counts by queue: `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`, `CLOSED`)
+    - `dailyTicketsMeta.simulatedRange` (`createdAverage`, `closedAverage`)
+    - `queues` (counts by `URGENT`, `BILLING`, `TECHNICAL`, `SALES`, `MISC`, `CLOSED`)
+    - `closedByTag` (closed-ticket category counts for sidebar filters)
 
 ### Health
 - `GET /health` - Health check
@@ -78,11 +73,11 @@ AUTO_CLASSIFY_INTERVAL_MS=300000
 
 ## Demo Daily Ticket Simulation
 
-When `DEMO_MODE=true` (or when `NODE_ENV` is not `production` and `DEMO_MODE` is unset), `GET /stats` returns a synthetic 30-day `dailyTickets` series.
+When demo mode is enabled (`DEMO_MODE=true`; default if unset), `GET /stats` returns a synthetic 67-day `dailyTickets` series.
 
-- Created volume is deterministically simulated between **15 and 35 tickets/day**.
-- Closed volume is pulled from real ticket close activity (`Ticket.status = CLOSED` by day).
-- This keeps demo mode visually stable for intake while still reflecting real closure behavior.
+- Created volume is deterministic and centered around **~20/day**.
+- Closed volume is deterministic and centered around **~17/day**.
+- This is display-only demo backfill so chart/KPI trends are non-zero and realistic even before agents interact with the app.
 
 ## Demo Ticket Seed Data
 
@@ -93,16 +88,18 @@ Demo ticket fixtures live in:
 Behavior:
 
 - On API startup, demo tickets seed automatically **only if** no tickets exist.
-- Startup also backfills AI analysis for tickets missing `TicketAIAnalysis`.
+- Seed creates ~50 realistic tickets (currently 52), all `OPEN`, with pre-created AI analysis and timestamps spread across recent days.
+- Startup also backfills AI analysis for any later tickets missing `TicketAIAnalysis`.
 - A periodic background backfill also runs every `AUTO_CLASSIFY_INTERVAL_MS` (default 5 minutes) so newly ingested tickets are auto-classified without manual Analyze clicks.
+- In demo mode, close actions are session-scoped (tracked in-memory per `X-Demo-Session-Id`) and are not persisted to the database.
 
 Re-run options:
 
 1. Keep existing data and skip re-seed (default): just start backend normally.
 2. Force re-seed demo data:
-   - Set `FORCE_RESEED_DEMO_TICKETS=true`
-   - Start backend (`npm run dev` or `npm start`)
-   - This clears existing tickets/analyses and reseeds from `seedDemoTickets.ts`
+   - Set `FORCE_RESEED_DEMO_TICKETS=true`, then start backend (`npm run dev` or `npm start`)
+   - Or run `npm run db:seed` (forces reseed automatically)
+   - Both options clear existing tickets/analyses and reseed from `seedDemoTickets.ts`
 
 ## Queue Routing Rules
 

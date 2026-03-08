@@ -13,6 +13,30 @@ import type {
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const DEMO_SESSION_STORAGE_KEY = 'support-triage-demo-session-id';
+
+function buildDemoSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '');
+  }
+
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getDemoSessionId(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const existing = window.sessionStorage.getItem(DEMO_SESSION_STORAGE_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const next = buildDemoSessionId();
+  window.sessionStorage.setItem(DEMO_SESSION_STORAGE_KEY, next);
+  return next;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -27,10 +51,13 @@ export class ApiError extends Error {
 }
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const demoSessionId = getDemoSessionId();
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(demoSessionId ? { 'X-Demo-Session-Id': demoSessionId } : {}),
       ...options?.headers,
     },
   });

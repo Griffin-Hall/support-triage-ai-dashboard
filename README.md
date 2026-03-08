@@ -5,8 +5,8 @@ A professional full-stack portfolio project demonstrating a customer support con
 ## Overview
 
 This application simulates a real-world customer support system where AI helps agents by:
-- Auto-tagging tickets (billing, technical, account, urgent, general)
-- Suggesting priority levels (low, medium, high)
+- Auto-tagging tickets (billing, technical, sales, misc)
+- Suggesting priority levels (low, medium, high, urgent)
 - Drafting first-response messages
 
 ## Tech Stack
@@ -46,7 +46,7 @@ npm install
 npm run db:generate
 npm run db:migrate
 
-# Seed with fake tickets (~40 tickets)
+# Seed with realistic demo tickets (~50 open tickets)
 npm run db:seed
 
 # Start dev server
@@ -71,13 +71,15 @@ The frontend will run on http://localhost:5173
 
 ### Dashboard
 - Overview stats (total tickets, open/closed, AI analyzed)
-- Distribution by tag and priority
+- Queue/category mix aligned to primary routing rules
 - AI suggestion acceptance rate
+- Sidebar queue counters and category cards sourced from the same aggregation logic
 
 ### Ticket List
 - Paginated table view
 - Filters: tag, priority, status, search
 - Quick view of AI analysis status
+- Closed Tickets nested category filtering (All, Billing, Technical, Sales, Misc)
 
 ### Ticket Detail
 - Full ticket view with customer info
@@ -85,6 +87,13 @@ The frontend will run on http://localhost:5173
 - AI-generated reply suggestion
 - Edit and submit final reply
 - Track AI suggestion acceptance
+- Side-panel classification controls (including Regenerate Classification)
+
+### Demo Mode
+- New browser sessions start with all seeded tickets open.
+- Ticket closes are session-scoped demo state (not persisted across visitors).
+- Stats includes a deterministic 67-day synthetic backfill for created/closed chart trends.
+- Theme preference (light/dark) is persisted locally per user.
 
 ### AI Triage
 The AI module (`backend/src/ai/triage.ts`) uses keyword-based rules for now. To switch to a real AI provider like OpenAI:

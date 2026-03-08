@@ -19,6 +19,14 @@ import {
   normalizeTag,
   routeTicketQueue,
 } from '../queueRouting';
+import { isDemoModeEnabled } from '../demoMode';
+import {
+  type DemoTicketClosure,
+  getDemoSessionId,
+  getDemoTicketClosure,
+  isDemoTicketClosed,
+  markDemoTicketClosed,
+} from '../demoSessionState';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -81,7 +89,42 @@ function getAiTagFilter(value: (typeof allTagValues)[number]): any {
   return { aiTag: value };
 }
 
-function toPublicAnalysis(analysis: any) {
+function createManualAnalysisForDemoClosure(ticketId: string, closure: DemoTicketClosure): any {
+  return {
+    id: `demo-${ticketId}`,
+    ticketId,
+    aiTag: closure.aiTag,
+    aiPriority: closure.aiPriority,
+    aiSuggestedReply: '',
+    aiProvider: 'MANUAL',
+    aiModel: 'Manual Agent',
+    acceptedByAgent: closure.acceptedAiSuggestion,
+    finalReply: closure.finalReply,
+    createdAt: closure.closedAt,
+    updatedAt: closure.closedAt,
+  };
+}
+
+function mergeAnalysisWithDemoClosure(analysis: any, ticketId: string, closure: DemoTicketClosure | null): any {
+  if (!closure) {
+    return analysis;
+  }
+
+  if (!analysis) {
+    return createManualAnalysisForDemoClosure(ticketId, closure);
+  }
+
+  return {
+    ...analysis,
+    aiTag: closure.aiTag,
+    aiPriority: closure.aiPriority,
+    acceptedByAgent: closure.acceptedAiSuggestion,
+    finalReply: closure.finalReply,
+    updatedAt: closure.closedAt,
+  };
+}
+
+function toPublicAnalysis(analysis: any, status: string = 'OPEN') {
   if (!analysis) {
     return analysis;
   }
@@ -94,20 +137,57 @@ function toPublicAnalysis(analysis: any) {
     aiTag: normalizedTag,
     aiPriority: normalizedPriority,
     needsReview: isNeedsReviewClassification(normalizedTag, analysis.aiProvider),
-    queue: routeTicketQueue(normalizedTag, normalizedPriority),
+    queue: routeTicketQueue(normalizedTag, normalizedPriority, status),
   };
 }
 
-function toPublicTicket(ticket: any) {
+function toPublicTicket(ticket: any, closure: DemoTicketClosure | null = null) {
   if (!ticket) {
     return ticket;
   }
 
+  const effectiveStatus = closure ? 'CLOSED' : ticket.status;
+  const mergedAnalysis = mergeAnalysisWithDemoClosure(ticket.aiAnalysis, ticket.id, closure);
+
   return {
     ...ticket,
-    aiAnalysis: ticket.aiAnalysis ? toPublicAnalysis(ticket.aiAnalysis) : undefined,
-    queue: routeTicketQueue(ticket.aiAnalysis?.aiTag, ticket.aiAnalysis?.aiPriority, ticket.status),
+    status: effectiveStatus,
+    updatedAt: closure ? closure.closedAt : ticket.updatedAt,
+    aiAnalysis: mergedAnalysis ? toPublicAnalysis(mergedAnalysis, effectiveStatus) : undefined,
+    queue: routeTicketQueue(mergedAnalysis?.aiTag, mergedAnalysis?.aiPriority, effectiveStatus),
   };
+}
+
+function ticketMatchesSearch(ticket: any, search: string | undefined): boolean {
+  if (!search) {
+    return true;
+  }
+
+  const needle = search.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+
+  return [ticket.subject, ticket.body, ticket.customerName].some((field) =>
+    String(field || '')
+      .toLowerCase()
+      .includes(needle),
+  );
+}
+
+function ticketMatchesTagFilter(ticket: any, value: (typeof allTagValues)[number]): boolean {
+  const aiTag = normalizeTag(ticket.aiAnalysis?.aiTag);
+
+  if (value === Tag.MISC || value === 'GENERAL' || value === 'ACCOUNT') {
+    return aiTag === Tag.MISC;
+  }
+
+  if (value === 'URGENT') {
+    const aiPriority = normalizePriority(ticket.aiAnalysis?.aiPriority);
+    return aiPriority === Priority.URGENT || aiPriority === Priority.HIGH;
+  }
+
+  return aiTag === value;
 }
 
 async function getOrCreateAiConfig() {
@@ -258,6 +338,53 @@ router.get('/', async (req, res) => {
   try {
     const { page, limit, queue, tag, priority, status, search } = ticketQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
+
+    if (demoMode && demoSessionId) {
+      const baseTickets = await prisma.ticket.findMany({
+        include: {
+          aiAnalysis: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let tickets = baseTickets.map((ticket) => {
+        const closure = getDemoTicketClosure(demoSessionId, ticket.id);
+        return toPublicTicket(ticket, closure);
+      });
+
+      if (status && statusValues.includes(status as (typeof statusValues)[number])) {
+        tickets = tickets.filter((ticket) => ticket.status === status);
+      }
+
+      tickets = tickets.filter((ticket) => ticketMatchesSearch(ticket, search));
+
+      if (isQueue(queue)) {
+        tickets = tickets.filter((ticket) => ticket.queue === queue);
+      }
+
+      if (isFilterTag(tag)) {
+        tickets = tickets.filter((ticket) => ticketMatchesTagFilter(ticket, tag));
+      }
+
+      if (isPriority(priority)) {
+        tickets = tickets.filter((ticket) => normalizePriority(ticket.aiAnalysis?.aiPriority) === priority);
+      }
+
+      const total = tickets.length;
+      const pagedTickets = tickets.slice(skip, skip + limit);
+
+      return res.json({
+        tickets: pagedTickets,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.max(1, Math.ceil(total / limit)),
+        },
+      });
+    }
 
     const where: any = {};
     const andFilters: any[] = [];
@@ -314,7 +441,7 @@ router.get('/', async (req, res) => {
     ]);
 
     res.json({
-      tickets: tickets.map(toPublicTicket),
+      tickets: tickets.map((ticket) => toPublicTicket(ticket)),
       pagination: {
         page,
         limit,
@@ -331,6 +458,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
 
     const ticket = await prisma.ticket.findUnique({
       where: { id },
@@ -343,7 +472,8 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    res.json(toPublicTicket(ticket));
+    const closure = demoSessionId ? getDemoTicketClosure(demoSessionId, ticket.id) : null;
+    res.json(toPublicTicket(ticket, closure));
   } catch (error) {
     console.error('Error fetching ticket:', error);
     res.status(500).json({ error: 'Failed to fetch ticket' });
@@ -353,6 +483,8 @@ router.get('/:id', async (req, res) => {
 router.post('/:id/analyze', async (req, res) => {
   try {
     const { id } = req.params;
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
 
     const ticket = await prisma.ticket.findUnique({ where: { id } });
 
@@ -360,7 +492,9 @@ router.post('/:id/analyze', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    if (ticket.status === 'CLOSED') {
+    const closedInSession = demoSessionId ? isDemoTicketClosed(demoSessionId, ticket.id) : false;
+
+    if (ticket.status === 'CLOSED' || closedInSession) {
       return res.status(409).json({
         error: 'Closed tickets cannot be analyzed.',
         code: 'TICKET_CLOSED',
@@ -438,6 +572,8 @@ router.post('/:id/analyze', async (req, res) => {
 router.post('/:id/regenerate', async (req, res) => {
   try {
     const { id } = req.params;
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
 
     const ticket = await prisma.ticket.findUnique({ where: { id } });
 
@@ -445,7 +581,9 @@ router.post('/:id/regenerate', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    if (ticket.status === 'CLOSED') {
+    const closedInSession = demoSessionId ? isDemoTicketClosed(demoSessionId, ticket.id) : false;
+
+    if (ticket.status === 'CLOSED' || closedInSession) {
       return res.status(409).json({
         error: 'Closed tickets cannot be regenerated.',
         code: 'TICKET_CLOSED',
@@ -532,6 +670,8 @@ router.post('/:id/reply', async (req, res) => {
   try {
     const { id } = req.params;
     const { finalReply, acceptedAiSuggestion, aiTag, aiPriority } = replySchema.parse(req.body);
+    const demoMode = isDemoModeEnabled();
+    const demoSessionId = demoMode ? getDemoSessionId(req) : null;
 
     const ticket = await prisma.ticket.findUnique({ where: { id } });
 
@@ -539,7 +679,9 @@ router.post('/:id/reply', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    if (ticket.status === 'CLOSED') {
+    const closedInSession = demoSessionId ? isDemoTicketClosed(demoSessionId, ticket.id) : false;
+
+    if (ticket.status === 'CLOSED' || closedInSession) {
       return res.status(409).json({
         error: 'Ticket is already closed.',
         code: 'TICKET_CLOSED',
@@ -550,7 +692,29 @@ router.post('/:id/reply', async (req, res) => {
       where: { ticketId: id },
     });
 
-    let updatedAnalysis;
+    if (demoMode && demoSessionId) {
+      if (!existingAnalysis && (!aiTag || !aiPriority)) {
+        return res.status(400).json({
+          error: 'Manual replies require tag and priority when no AI analysis exists.',
+          code: 'MANUAL_TAGS_REQUIRED',
+        });
+      }
+
+      const resolvedTag = aiTag ?? normalizeTag(existingAnalysis?.aiTag);
+      const resolvedPriority = aiPriority ?? normalizePriority(existingAnalysis?.aiPriority);
+      const closure = markDemoTicketClosed(demoSessionId, {
+        ticketId: id,
+        finalReply: finalReply.trim(),
+        acceptedAiSuggestion: acceptedAiSuggestion ?? false,
+        aiTag: resolvedTag,
+        aiPriority: resolvedPriority,
+      });
+
+      const analysisForResponse = mergeAnalysisWithDemoClosure(existingAnalysis, id, closure);
+      return res.json(toPublicAnalysis(analysisForResponse, 'CLOSED'));
+    }
+
+    let updatedAnalysis: any;
 
     if (existingAnalysis) {
       updatedAnalysis = await prisma.ticketAIAnalysis.update({
@@ -589,7 +753,7 @@ router.post('/:id/reply', async (req, res) => {
       data: { status: 'CLOSED' },
     });
 
-    res.json(toPublicAnalysis(updatedAnalysis));
+    res.json(toPublicAnalysis(updatedAnalysis, 'CLOSED'));
   } catch (error) {
     console.error('Error submitting reply:', error);
 

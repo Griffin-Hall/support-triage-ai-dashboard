@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { statsApi } from '../api/client';
+import { useTheme } from '../context/ThemeContext';
 import type { Stats } from '../types';
 
 type TrendDirection = 'up' | 'down' | 'flat';
@@ -55,26 +56,43 @@ function trendClasses(direction: TrendDirection): string {
 
 function trendArrow(direction: TrendDirection): string {
   if (direction === 'up') {
-    return '▲';
+    return '^';
   }
 
   if (direction === 'down') {
-    return '▼';
+    return 'v';
   }
 
-  return '●';
+  return '-';
 }
 
 function DailyTicketsChart({
   points,
+  theme,
 }: {
   points: Stats['dailyTickets'];
+  theme: 'light' | 'dark';
 }) {
   const width = 980;
   const height = 310;
   const margin = { top: 16, right: 16, bottom: 44, left: 44 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
+
+  const palette =
+    theme === 'dark'
+      ? {
+          grid: '#334155',
+          axis: '#94a3b8',
+          created: '#38bdf8',
+          closed: '#34d399',
+        }
+      : {
+          grid: '#e2e8f0',
+          axis: '#64748b',
+          created: '#0ea5e9',
+          closed: '#10b981',
+        };
 
   const maxValue = Math.max(1, ...points.map((point) => Math.max(point.created, point.closed)));
   const step = points.length > 0 ? innerWidth / points.length : innerWidth;
@@ -119,8 +137,8 @@ function DailyTicketsChart({
           const y = yAt(tick);
           return (
             <g key={tick}>
-              <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-              <text x={margin.left - 8} y={y + 4} fontSize="10" textAnchor="end" fill="#64748b">
+              <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} stroke={palette.grid} strokeWidth="1" />
+              <text x={margin.left - 8} y={y + 4} fontSize="10" textAnchor="end" fill={palette.axis}>
                 {tick}
               </text>
             </g>
@@ -135,17 +153,9 @@ function DailyTicketsChart({
 
           return (
             <g key={point.date}>
-              <rect
-                x={x - barWidth / 2}
-                y={createdY}
-                width={barWidth}
-                height={barHeight}
-                rx={2}
-                fill="#0ea5e9"
-                fillOpacity="0.75"
-              />
+              <rect x={x - barWidth / 2} y={createdY} width={barWidth} height={barHeight} rx={2} fill={palette.created} fillOpacity="0.75" />
               {showLabel && (
-                <text x={x} y={height - 16} fontSize="10" textAnchor="middle" fill="#64748b">
+                <text x={x} y={height - 16} fontSize="10" textAnchor="middle" fill={palette.axis}>
                   {point.label}
                 </text>
               )}
@@ -154,21 +164,14 @@ function DailyTicketsChart({
         })}
 
         {points.length > 1 && (
-          <path
-            d={closedPath}
-            fill="none"
-            stroke="#10b981"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          <path d={closedPath} fill="none" stroke={palette.closed} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
         )}
 
         {points.map((point, index) => {
           const x = xAt(index);
           const y = yAt(point.closed);
 
-          return <circle key={`${point.date}-closed`} cx={x} cy={y} r="2.5" fill="#10b981" />;
+          return <circle key={`${point.date}-closed`} cx={x} cy={y} r="2.5" fill={palette.closed} />;
         })}
       </svg>
     </div>
@@ -176,6 +179,7 @@ function DailyTicketsChart({
 }
 
 export default function StatsPage() {
+  const { theme } = useTheme();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -318,12 +322,12 @@ export default function StatsPage() {
             }`}
           >
             {stats.dailyTicketsMeta.mode === 'simulated'
-              ? `Demo simulated intake (${stats.dailyTicketsMeta.simulatedRange?.min}-${stats.dailyTicketsMeta.simulatedRange?.max}/day)`
+              ? `Demo synthetic trend (~${stats.dailyTicketsMeta.simulatedRange?.createdAverage}/day created, ~${stats.dailyTicketsMeta.simulatedRange?.closedAverage}/day closed)`
               : 'Production data'}
           </span>
         </div>
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-          <DailyTicketsChart points={stats.dailyTickets} />
+          <DailyTicketsChart points={stats.dailyTickets} theme={theme} />
         </div>
       </section>
     </div>

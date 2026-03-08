@@ -339,16 +339,6 @@ export default function TicketDetailPage() {
               <h2 id="ticket-ai-draft-heading" className="text-sm font-semibold text-slate-900">
                 AI Draft Reply
               </h2>
-              {!isClosed && (
-                <button
-                  type="button"
-                  onClick={() => void triggerAnalyzeOrRegenerate()}
-                  disabled={aiLoading}
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {hasAnalysis ? 'Regenerate with AI' : 'Generate with AI'}
-                </button>
-              )}
             </div>
 
             {aiLoading ? (
@@ -498,7 +488,7 @@ export default function TicketDetailPage() {
               disabled={aiLoading || isClosed}
               className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {aiLoading ? 'Generating...' : hasAnalysis ? 'Regenerate classification' : 'Run classification'}
+              {aiLoading ? 'Generating...' : hasAnalysis ? 'Regenerate Classification' : 'Run Classification'}
             </button>
             {!aiConfigured && (
               <button

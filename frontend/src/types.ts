@@ -85,7 +85,7 @@ export interface Stats {
     ticketsWithAnalysis: number;
     pendingAnalysis: number;
   };
-  tags: { tag: TagType; count: number }[];
+  tags: { tag: QueueType; count: number }[];
   priorities: { priority: PriorityType; count: number }[];
   aiPerformance: {
     decidedAnalyses: number;
@@ -116,11 +116,12 @@ export interface Stats {
     windowDays: number;
     mode: 'simulated' | 'actual';
     simulatedRange: {
-      min: number;
-      max: number;
+      createdAverage: number;
+      closedAverage: number;
     } | null;
   };
   queues: Record<QueueType, number>;
+  closedByTag: Record<TagType, number>;
 }
 
 export interface TicketFilters {

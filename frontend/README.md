@@ -52,11 +52,14 @@ src/
 
 - View and filter tickets by tag, priority, status, or search
 - Queue-aware filtering and routing (`Urgent`, `Billing`, `Technical`, `Sales`, `Misc`, `Closed Tickets`)
+- Nested closed-ticket category filter in sidebar (`All`, `Billing`, `Technical`, `Sales`, `Misc`)
 - Live queue counts in left navigation (auto-refresh + ticket update events)
 - Run AI triage on tickets to get auto-tags and suggested replies
 - Accept or modify AI suggestions when replying
 - Dashboard stats showing ticket distribution and AI acceptance rate
+- Session-aware demo close state (new sessions start with all tickets open)
+- Light/Dark theme toggle in sidebar with persisted preference
 - Dedicated `/stats` KPI page with:
   - Tickets Closed (total, last 7 days, last 30 days)
   - AI Drafts Created (total, last 7 days, last 30 days)
-  - Daily Tickets chart (created vs closed) powered by `GET /stats`
+  - 67-day Daily Tickets chart (created vs closed) powered by `GET /stats`
