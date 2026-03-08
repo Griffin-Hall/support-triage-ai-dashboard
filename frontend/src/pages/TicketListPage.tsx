@@ -290,10 +290,8 @@ export default function TicketListPage() {
                     type="button"
                     aria-label={`${ticket.subject}. ${statusLabel}. ${priorityLabel}. ${aiTagLabel}. Open ticket details.`}
                     onClick={() => navigate(`/tickets/${ticket.id}`)}
-                    className={`group w-full border-l-4 px-5 py-4 text-left transition ${
-                      isUrgent
-                        ? 'border-l-rose-400 bg-rose-50/60 hover:bg-rose-50'
-                        : 'border-l-transparent hover:bg-slate-50'
+                    className={`queue-ticket-row group w-full px-5 py-4 text-left transition-colors duration-150 ${
+                      isUrgent ? 'queue-ticket-row--urgent' : 'queue-ticket-row--default'
                     }`}
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
