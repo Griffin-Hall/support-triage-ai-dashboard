@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import AISettingsModal from './AISettingsModal';
+import SideGutterAmbient from './SideGutterAmbient';
 import { useAISettings } from '../context/AISettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { statsApi } from '../api/client';
@@ -165,7 +166,8 @@ export default function AppShell() {
         Skip to main content
       </a>
       <div className="pointer-events-none fixed inset-0 bg-app-gradient" aria-hidden="true" />
-      <div className="relative mx-auto flex min-h-screen max-w-[1520px] gap-6 px-4 py-5 md:px-6">
+      <SideGutterAmbient />
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-[1520px] gap-6 px-4 py-5 md:px-6">
         <aside className="hidden w-72 shrink-0 rounded-3xl border border-white/60 bg-white/85 p-5 shadow-lg backdrop-blur lg:block">
           <div className="rounded-2xl bg-slate-900 px-4 py-3 text-white">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Workspace</p>
